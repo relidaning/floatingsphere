@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#0d0e13">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -32,6 +32,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  html { touch-action: pan-x pan-y; }  /* no pinch or double-tap zoom */
   body {
     font: 14px/1.4 "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, SFMono-Regular, Menlo, monospace;
     padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
@@ -430,6 +431,8 @@ if (INITIAL) apply(INITIAL); else poll();
 setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);
 setInterval(() => { render(); tickElapsed(); }, 1000);  // tick elapsed / time-left text between polls
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+// iOS Safari ignores user-scalable=no, so block its pinch gesture directly.
+document.addEventListener("gesturestart", e => e.preventDefault());
 </script>
 </body>
 </html>
