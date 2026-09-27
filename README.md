@@ -5,6 +5,8 @@ Claude subscription you're using, and what your Claude Code sessions are doing.
 
 ![The sphere and its hover card](docs/screenshot.png)
 
+![The sphere on the desktop, bottom right](docs/desktop.png)
+
 ```
         ╭── 7-day ring: amber arc = used %, white tick = time elapsed in the week
       ╭─┴─╮
