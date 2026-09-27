@@ -24,6 +24,10 @@ import time
 
 import gi
 
+# The sphere is a 75px cairo drawing: GTK's GPU renderer (GL/Vulkan) costs more per
+# frame than it saves here (upload + driver threads), so default to software.
+os.environ.setdefault("GSK_RENDERER", "cairo")
+
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, Gtk  # noqa: E402
@@ -39,7 +43,8 @@ POPUP_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sphere_
 SIZE = 75             # window size in px
 MARGIN_RIGHT = 12     # distance from the right screen edge
 RING_WIDTH = 5
-FPS = 24
+FPS = 24              # while something eases in or the hover card is open
+IDLE_FPS = 8          # at rest only the ripple moves; it doesn't need more
 POLL_S = 2.0          # session / snapshot poll interval
 STALE_S = 40 * 60     # snapshot older than this is shown dimmed
 HOVER_OPEN_MS = 250   # hover this long before the card opens
@@ -116,9 +121,11 @@ class Sphere(Gtk.DrawingArea):
         return level, color
 
     def step(self):
+        """Ease toward the targets; True while still visibly moving."""
         level, color = self.targets()
         self.level += (level - self.level) * 0.08
         self.color = [c + (t - c) * 0.1 for c, t in zip(self.color, color)]
+        return abs(level - self.level) > 0.002 or any(abs(t - c) > 0.004 for c, t in zip(self.color, color))
 
     def draw(self, _area, cr, w, h):
         u = self.state.usage or {}
@@ -222,7 +229,7 @@ def hyprland_rules():
         x, y = None, None
     sel = f"class:^({APP_ID})$"
     rules = ["float", "pin", f"size {SIZE} {SIZE}", "noborder", "noshadow", "noblur",
-             "noinitialfocus", "rounding 0", "noanim", "nodim", "opaque"]
+             "noinitialfocus", "nofollowmouse", "rounding 0", "noanim", "nodim", "opaque"]
     if x is not None:
         rules.append(f"move {x} {y}")
     batch = ";".join(f"keyword windowrulev2 {r}, {sel}" for r in rules)
@@ -262,10 +269,11 @@ class App(Gtk.Application):
         self.sphere = Sphere(self.state)
         self.sphere.set_cursor(Gdk.Cursor.new_from_name("pointer"))
         win.set_child(self.sphere)
-        # The sphere never needs the keyboard, but a click still focuses it, and with
-        # Hyprland's float_switch_override_focus = 0 focus then stays stuck on it (the
-        # pointer moving back onto a tiled window doesn't switch focus). `nofocus`
-        # isn't an option: it also stops pointer events, so hover and clicks die.
+        # The sphere never needs the keyboard. `nofollowmouse` keeps hovering from
+        # focusing it, but a click still does, and with Hyprland's
+        # float_switch_override_focus = 0 focus then stays stuck on it (the pointer
+        # moving back onto a tiled window doesn't switch focus). `nofocus` isn't an
+        # option: it also stops pointer events, so hover and clicks die.
         # Instead hand focus straight back to the previous window.
         win.connect("notify::is-active", self.on_active)
 
@@ -287,7 +295,8 @@ class App(Gtk.Application):
         self.state.poll()
         self.sphere.level, self.sphere.color = self.sphere.targets()[0], list(self.sphere.targets()[1])
         GLib.timeout_add(int(POLL_S * 1000), self.on_poll)
-        GLib.timeout_add(1000 // FPS, self.on_frame)
+        self.fps = None
+        self.schedule_frames(FPS)
         win.present()
 
     def on_click(self, gesture, n_press, _x, _y):
@@ -300,9 +309,35 @@ class App(Gtk.Application):
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def on_active(self, win, _pspec):
-        if win.is_active() and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-            subprocess.Popen(["hyprctl", "dispatch", "focuscurrentorlast"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not (win.is_active() and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")):
+            return
+        # Only a click should be undone. Switching to an empty workspace also focuses
+        # the pinned sphere (it's the only window there); handing focus "back" then
+        # makes Hyprland pick the sphere again and warp the cursor onto it.
+        if not self.cursor_on_sphere():
+            return
+        # A focus dispatch warps the cursor to the new window's center, which would
+        # yank the pointer off the sphere; suspend warps around it.
+        try:
+            warps = json.loads(subprocess.run(["hyprctl", "-j", "getoption", "cursor:no_warps"],
+                                              capture_output=True, text=True).stdout)["int"]
+        except (ValueError, KeyError):
+            warps = 0
+        subprocess.Popen(["hyprctl", "--batch", "keyword cursor:no_warps 1; dispatch focuscurrentorlast; "
+                          f"keyword cursor:no_warps {warps}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def cursor_on_sphere(self):
+        try:
+            cur = json.loads(subprocess.run(["hyprctl", "-j", "cursorpos"],
+                                            capture_output=True, text=True).stdout)
+            me = next(c for c in json.loads(subprocess.run(["hyprctl", "-j", "clients"],
+                                                           capture_output=True, text=True).stdout)
+                      if c.get("class") == APP_ID)
+        except (ValueError, StopIteration):
+            return True
+        (x, y), (w, h) = me["at"], me["size"]
+        return x <= cur["x"] < x + w and y <= cur["y"] < y + h
 
     def on_enter(self, *_):
         if self.hover_timer is None:
@@ -327,11 +362,20 @@ class App(Gtk.Application):
         self.state.poll()
         return True
 
+    def schedule_frames(self, fps):
+        self.fps = fps
+        GLib.timeout_add(1000 // fps, self.on_frame)
+
     def on_frame(self):
-        self.sphere.step()
+        moving = self.sphere.step()
         self.sphere.queue_draw()
-        if self.popover.get_visible():
+        card_open = self.popover.get_visible()
+        if card_open:
             self.card.queue_draw()
+        fps = FPS if moving or card_open else IDLE_FPS
+        if fps != self.fps:
+            self.schedule_frames(fps)
+            return False
         return True
 
 

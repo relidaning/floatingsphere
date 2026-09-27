@@ -25,6 +25,7 @@ script that waybar runs continuously.
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 from datetime import datetime
@@ -217,6 +218,10 @@ def collect_sessions():
         info = _read_json(os.path.join(SESSIONS_DIR, filename))
         if not info:
             continue
+        # The background daemon pre-warms "spare" processes to claim the next
+        # background job; they register a session file but aren't a session yet.
+        if info.get("spare"):
+            continue
         pid = info.get("pid")
         # Session files outlive a crashed process; /proc is the ground truth.
         if pid and _pid_alive(pid):
@@ -258,6 +263,7 @@ def collect_sessions():
 
         sessions.append({
             "pid": pid,
+            "session_id": session_id,
             "name": info.get("name") or os.path.basename(cwd) or f"pid {pid}",
             "cwd": cwd,
             "status": status,
@@ -270,8 +276,20 @@ def collect_sessions():
         })
 
     order = {"bg": 0, "busy": 1, "agent": 2, "waiting": 3, "idle": 4}
-    sessions.sort(key=lambda s: (order.get(s["status"], 5), -s["status_since"]))
-    return sessions
+    rank = lambda s: (order.get(s["status"], 5), -s["status_since"])  # noqa: E731
+
+    # One conversation can have several processes: a session moved to the
+    # background keeps its terminal `claude --resume` alongside the daemon's
+    # worker, both registered under the same sessionId. Show it once, with the
+    # liveliest status, and remember every pid so stopping it stops all of them.
+    merged = {}
+    for s in sorted(sessions, key=rank):
+        key = s["session_id"] or f"pid:{s['pid']}"
+        if key in merged:
+            merged[key]["pids"].append(s["pid"])
+        else:
+            merged[key] = dict(s, pids=[s["pid"]])
+    return sorted(merged.values(), key=rank)
 
 
 def _hypr_clients():
@@ -305,9 +323,21 @@ def window_for_pid(pid, clients=None, max_depth=24):
     return None
 
 
-def focus_session(pid):
-    """Jump to the terminal running `pid`. False if it has no window."""
-    address = window_for_pid(pid)
+def stop_session(pids):
+    """SIGTERM every process of a session (Claude Code exits cleanly on it)."""
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+def focus_session(pids):
+    """Jump to the terminal running any of `pids`. False if none has a window."""
+    if isinstance(pids, int):
+        pids = [pids]
+    clients = _hypr_clients()
+    address = next((a for a in (window_for_pid(p, clients) for p in pids) if a), None)
     if not address:
         return False
     try:

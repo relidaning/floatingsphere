@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from claude_sessions import (  # noqa: E402
     collect_sessions,
     focus_session,
+    stop_session,
     fmt_elapsed,
     read_usage,
     shorten_path,
@@ -44,72 +45,93 @@ POPUP_MAX_H = 480
 
 NEW_SESSION_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_new.sh")
 
-# status -> (dot color, label, css class). Ported from the now-retired
-# ClaudeMonitor.py rather than left an orphaned import.
+# status -> (label, css class). Colors live in CSS and match hovercard.STATUS,
+# so the list, the hover card's sessions bar and the sphere's water agree.
 STATUS_STYLE = {
-    "busy":    ("#a6e3a1", "busy",       "st-busy"),
-    "waiting": ("#fab387", "waiting",    "st-waiting"),
-    "idle":    ("#6c7086", "idle",       "st-idle"),
-    "bg":      ("#cba6f7", "background", "st-bg"),
-    "agent":   ("#89dceb", "subagent",   "st-bg"),
+    "busy":    ("busy",       "st-busy"),
+    "waiting": ("waiting",    "st-waiting"),
+    "idle":    ("idle",       "st-idle"),
+    "bg":      ("background", "st-bg"),
+    "agent":   ("subagent",   "st-bg"),
 }
+DISARM_MS = 3000  # an armed stop button reverts after this long
 
+# Palette shared with the sphere and hovercard.py: the glass surface, INK text
+# tiers, amber for usage (the 7d ring), the categorical status colors.
 CSS = b"""
-window.claude-waybar-popup { background: rgba(24, 24, 37, 0.98); }
-.cwp-root {
-    padding: 12px 14px 8px 14px;
+window.fs-popup {
+    background: rgba(21, 22, 30, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
 }
-.cwp-root, .cwp-root label { font-family: "JetBrainsMono Nerd Font", monospace; }
-.cwp-root { color: #cdd6f4; }
+.cwp-root { padding: 12px 12px 8px 12px; }
+.cwp-root, .cwp-root label { font-family: "JetBrainsMono Nerd Font", monospace; color: #edf0f5; }
 
-.cwp-title { font-size: 13px; font-weight: bold; color: #89b4fa; }
-.cwp-usage { font-size: 11px; color: #9399b2; }
-.cwp-usage-warn { font-size: 11px; color: #f38ba8; font-weight: bold; }
+.cwp-title { font-size: 13px; font-weight: bold; }
+.cwp-root label.cwp-usage { font-size: 11px; color: #fabf40; }
+.cwp-root label.cwp-usage-warn { font-size: 11px; color: #f75c5c; font-weight: bold; }
 
-.cwp-sep {
-    background: rgba(137, 180, 250, 0.16);
-    min-height: 1px;
-    margin: 6px 0 4px 0;
-}
+.cwp-sep { background: rgba(255, 255, 255, 0.08); min-height: 1px; margin: 8px 0 6px 0; }
 
 .cwp-card {
-    border-radius: 9px;
-    padding: 6px 8px;
+    border-radius: 10px;
+    padding: 7px 6px 7px 10px;
     margin-bottom: 4px;
-    background: rgba(49, 50, 68, 0.45);
-    border-left: 3px solid #6c7086;
+    background: rgba(255, 255, 255, 0.04);
 }
-.cwp-card.st-busy    { border-left-color: #a6e3a1; background: rgba(64, 90, 64, 0.35); }
-.cwp-card.st-waiting { border-left-color: #fab387; background: rgba(96, 74, 50, 0.38); }
-.cwp-card.st-idle    { border-left-color: #6c7086; }
-.cwp-card.st-bg      { border-left-color: #cba6f7; background: rgba(74, 58, 96, 0.35); }
-.cwp-card:hover       { background: rgba(88, 91, 112, 0.75); }
+.cwp-card:hover { background: rgba(255, 255, 255, 0.08); }
 
-.cwp-name   { font-size: 12px; font-weight: bold; color: #f5e0dc; }
-.cwp-status { font-size: 10px; color: #9399b2; }
-.cwp-meta   { font-size: 10px; color: #7f849c; }
-.cwp-tool   { font-size: 10px; color: #89dceb; }
-.cwp-task   { font-size: 11px; color: #bac2de; }
-.cwp-empty  { font-size: 11px; color: #6c7086; font-style: italic; padding: 6px 2px; }
-.cwp-hint   { font-size: 10px; color: #45475a; }
+.cwp-dot { min-width: 8px; min-height: 8px; border-radius: 4px; margin-top: 5px; background: #1fa874; }
+.st-busy .cwp-dot    { background: #a854f7; box-shadow: 0 0 6px rgba(168, 84, 247, 0.8); }
+.st-waiting .cwp-dot { background: #d95926; box-shadow: 0 0 6px rgba(217, 89, 38, 0.8); }
+.st-bg .cwp-dot      { background: #3987e5; }
+.st-idle .cwp-dot    { background: #1fa874; }
+
+.cwp-root label.cwp-name   { font-size: 12px; font-weight: bold; color: #edf0f5; }
+.cwp-root label.cwp-status { font-size: 10px; color: #b3b8c7; }
+.st-busy label.cwp-status    { color: #c58cfa; }
+.st-waiting label.cwp-status { color: #ec8a5f; }
+.cwp-root label.cwp-meta   { font-size: 10px; color: #80858f; }
+.cwp-root label.cwp-tool   { font-size: 10px; color: #c58cfa; }
+.cwp-root label.cwp-task   { font-size: 11px; color: #b3b8c7; }
+.cwp-root label.cwp-empty  { font-size: 11px; color: #80858f; font-style: italic; padding: 6px 2px; }
+.cwp-root label.cwp-hint   { font-size: 10px; color: #5c606b; }
 
 /* background-image/box-shadow reset: GTK4's default button styling paints a
-   gradient and a shadow over anything set here (same fix the retired
-   ClaudeMonitor.py panel needed for this exact button). */
+   gradient and a shadow over anything set here. */
+.cwp-add, .cwp-stop {
+    background-image: none;
+    box-shadow: none;
+    border-radius: 11px;
+}
 .cwp-add {
     min-width: 24px;
     min-height: 22px;
     padding: 0 6px;
-    border-radius: 11px;
-    border: 1px solid rgba(137, 180, 250, 0.35);
-    background-image: none;
-    background: rgba(137, 180, 250, 0.12);
-    box-shadow: none;
-    color: #89b4fa;
+    border: 1px solid rgba(250, 191, 64, 0.35);
+    background: rgba(250, 191, 64, 0.10);
+    color: #fabf40;
     font-size: 14px;
     font-weight: bold;
 }
-.cwp-add:hover { background: rgba(137, 180, 250, 0.32); color: #cdd6f4; }
+.cwp-add:hover { background: rgba(250, 191, 64, 0.28); color: #edf0f5; }
+.cwp-stop {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0 6px;
+    margin-left: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #80858f;
+    font-size: 13px;
+}
+.cwp-stop:hover { border-color: rgba(247, 92, 92, 0.45); color: #f75c5c; }
+.cwp-stop.armed {
+    border-color: rgba(247, 92, 92, 0.6);
+    background: rgba(247, 92, 92, 0.18);
+    color: #f75c5c;
+    font-weight: bold;
+}
 """
 
 
@@ -180,7 +202,7 @@ class PopupWindow(Gtk.Window):
         self.set_title(f"floatingsphere-popup-{os.getpid()}")
         self.set_decorated(False)
         self.set_default_size(POPUP_W, -1)
-        self.add_css_class("claude-waybar-popup")
+        self.add_css_class("fs-popup")
 
         keys = Gtk.EventControllerKey()
         keys.connect("key-pressed", self.on_key)
@@ -192,7 +214,7 @@ class PopupWindow(Gtk.Window):
         self.set_child(root)
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        title = Gtk.Label(label="\U000f06a9  Claude", xalign=0)
+        title = Gtk.Label(label="Claude sessions", xalign=0)
         title.add_css_class("cwp-title")
         header.append(title)
         self.usage_label = Gtk.Label(label="", xalign=1)
@@ -224,7 +246,7 @@ class PopupWindow(Gtk.Window):
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         footer.set_margin_top(4)
 
-        hint = Gtk.Label(label="click a session to jump · Esc to close", xalign=0)
+        hint = Gtk.Label(label="click to jump · ■ twice to stop · Esc", xalign=0)
         hint.add_css_class("cwp-hint")
         hint.set_hexpand(True)
         footer.append(hint)
@@ -262,6 +284,11 @@ class PopupWindow(Gtk.Window):
         self.usage_label.set_text(usage)
         self.usage_label.set_css_classes(["cwp-usage-warn" if warn else "cwp-usage"])
 
+        self._fill_list()
+
+    def _fill_list(self):
+        while (child := self.list_box.get_first_child()) is not None:
+            self.list_box.remove(child)
         sessions = collect_sessions()
         if not sessions:
             empty = Gtk.Label(label="no sessions running", xalign=0)
@@ -272,30 +299,54 @@ class PopupWindow(Gtk.Window):
         for session in sessions:
             self.list_box.append(self._build_card(session))
 
-    def _on_card_clicked(self, _gesture, _n_press, _x, _y, pid):
-        focus_session(pid)
+    def _on_card_clicked(self, _gesture, _n_press, _x, _y, pids):
+        focus_session(pids)
         self.close()
 
-    def _build_card(self, session):
-        _color, label, css_class = STATUS_STYLE.get(
-            session["status"], STATUS_STYLE["idle"]
-        )
+    def _on_stop_clicked(self, button, pids):
+        """First click arms the button, the second stops the session."""
+        if not button.has_css_class("armed"):
+            button.add_css_class("armed")
+            button.set_label("stop?")
+            GLib.timeout_add(DISARM_MS, self._disarm, button)
+            return
+        stop_session(pids)
+        button.set_sensitive(False)
+        button.set_label("…")
+        # give the processes a moment to exit and drop out of the registry
+        GLib.timeout_add(700, lambda: self._fill_list() or False)
 
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+    def _disarm(self, button):
+        if button.get_sensitive():
+            button.remove_css_class("armed")
+            button.set_label("■")
+        return False
+
+    def _build_card(self, session):
+        label, css_class = STATUS_STYLE.get(session["status"], STATUS_STYLE["idle"])
+
+        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=9)
         card.add_css_class("cwp-card")
         card.add_css_class(css_class)
 
         click = Gtk.GestureClick()
         click.set_button(Gdk.BUTTON_PRIMARY)
-        click.connect("released", self._on_card_clicked, session["pid"])
+        click.connect("released", self._on_card_clicked, session["pids"])
         card.add_controller(click)
         card.set_cursor(Gdk.Cursor.new_from_name("pointer"))
+
+        dot = Gtk.Box(valign=Gtk.Align.START)
+        dot.add_css_class("cwp-dot")
+        card.append(dot)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, hexpand=True)
+        card.append(body)
 
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         name = Gtk.Label(label=session["name"], xalign=0)
         name.add_css_class("cwp-name")
         name.set_ellipsize(3)  # Pango.EllipsizeMode.END
-        name.set_max_width_chars(18)  # same reasoning as usage_label above
+        name.set_max_width_chars(26)  # same reasoning as usage_label above
         top.append(name)
 
         status_text = label
@@ -310,7 +361,7 @@ class PopupWindow(Gtk.Window):
         status.add_css_class("cwp-status")
         status.set_hexpand(True)
         top.append(status)
-        card.append(top)
+        body.append(top)
 
         meta_text = shorten_path(session["cwd"])
         active = session["status"] in ("busy", "bg", "agent")
@@ -321,17 +372,23 @@ class PopupWindow(Gtk.Window):
         meta = Gtk.Label(label=meta_text, xalign=0)
         meta.add_css_class("cwp-tool" if active and session["tool"] else "cwp-meta")
         meta.set_ellipsize(1)  # Pango.EllipsizeMode.START — keep the leaf dir
-        meta.set_max_width_chars(44)  # cwd can be arbitrarily long otherwise
-        card.append(meta)
+        meta.set_max_width_chars(40)  # cwd can be arbitrarily long otherwise
+        body.append(meta)
 
         if session["task"]:
             task = Gtk.Label(label=truncate(session["task"], 90), xalign=0)
             task.add_css_class("cwp-task")
             task.set_wrap(True)
-            task.set_max_width_chars(44)
+            task.set_max_width_chars(40)
             task.set_lines(2)
             task.set_ellipsize(3)
-            card.append(task)
+            body.append(task)
+
+        stop = Gtk.Button(label="■", valign=Gtk.Align.CENTER)
+        stop.add_css_class("cwp-stop")
+        stop.set_tooltip_text("stop this session (click twice)")
+        stop.connect("clicked", self._on_stop_clicked, session["pids"])
+        card.append(stop)
 
         return card
 
