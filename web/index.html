@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0e13">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sphere">
+<title>Floating Sphere</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="manifest" href="manifest.json">
+<style>
+  /* Palette shared with floatingsphere.py / hovercard.py / sphere_popup.py */
+  :root {
+    color-scheme: dark;
+    --bg: #0d0e13;
+    --surface: rgba(21, 22, 30, 0.96);
+    --line: rgba(255, 255, 255, 0.08);
+    --ink: #edf0f5;
+    --ink-2: #b3b8c7;
+    --ink-3: #80858f;
+    --ink-4: #5c606b;
+    --amber: #fabf40;
+    --critical: #e66666;
+    --busy: #a854f7;
+    --bg-run: #3987e5;
+    --waiting: #d95926;
+    --idle: #1fa874;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font: 14px/1.4 "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 960px; margin: 0 auto; display: grid; gap: 16px; }
+  @media (min-width: 760px) {
+    main { grid-template-columns: 340px 1fr; align-items: start; }
+    .left { position: sticky; top: 16px; }
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .left { display: grid; gap: 16px; }
+  .sphere-wrap { display: grid; place-items: center; padding: 8px 0 4px; }
+  canvas#sphere { width: 220px; height: 220px; }
+  .legend { display: flex; justify-content: center; gap: 14px; font-size: 11px; color: var(--ink-3); margin-top: 8px; flex-wrap: wrap; }
+
+  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 14px; }
+  .head h2 { margin: 0; font-size: 14px; }
+  .muted { color: var(--ink-3); font-size: 11px; }
+  .stale { color: var(--critical); }
+
+  .meter { margin-bottom: 18px; }
+  .meter:last-child { margin-bottom: 0; }
+  .meter .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .meter .title { color: var(--ink-2); font-size: 12px; }
+  .meter .pct { font-weight: bold; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .bar { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.08); margin: 8px 0 7px; }
+  .bar > div { position: absolute; left: 0; top: 0; height: 100%; border-radius: 4px; transition: width .8s cubic-bezier(.2,.8,.2,1); }
+  .bar .proj { background: rgba(250, 191, 64, 0.28); }
+  .bar .proj.over { background: rgba(230, 102, 102, 0.28); }
+  .bar .used { background: var(--amber); min-width: 0; }
+  .bar .pace { width: 2px !important; background: #fff; top: -3px; height: 14px; border-radius: 1px; transition: left .8s cubic-bezier(.2,.8,.2,1); }
+  .meter .sub { color: var(--ink-3); font-size: 11px; }
+
+  .segbar { display: flex; gap: 2px; height: 8px; margin: 8px 0 9px; }
+  .segbar > div { border-radius: 3px; transition: flex-grow .8s; }
+  .segbar.empty { background: rgba(255,255,255,0.08); border-radius: 4px; }
+  .dots { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--ink-2); }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; transform: scale(.8); } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } .bar > div, .segbar > div { transition: none; } }
+
+  .s-busy { background: var(--busy); } .s-bg, .s-agent { background: var(--bg-run); }
+  .s-waiting { background: var(--waiting); } .s-idle { background: var(--idle); }
+
+  .list { display: grid; gap: 6px; }
+  .sess {
+    background: rgba(255,255,255,0.04);
+    border-radius: 10px;
+    padding: 9px 12px;
+    display: grid;
+    grid-template-columns: 10px 1fr auto;
+    align-items: start;
+    column-gap: 10px;
+    min-width: 0;
+  }
+  .sess .dot { margin: 6px 0 0; }
+  .sess .top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+  .sess .name { font-weight: bold; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess .st { font-size: 11px; color: var(--ink-2); white-space: nowrap; }
+  .sess.busy .st { color: #c58cfa; } .sess.waiting .st { color: #ec8a5f; }
+  .sess .task { font-size: 12px; color: var(--ink-2); margin-top: 3px; overflow-wrap: anywhere; }
+  .sess .meta { font-size: 11px; color: var(--ink-3); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sess .tool { color: #c58cfa; }
+  .stop {
+    width: 34px; height: 34px; margin: -3px -6px 0 4px;
+    display: grid; place-items: center;
+    border: 1px solid transparent; border-radius: 12px;
+    background: transparent; color: var(--ink-3);
+    font: inherit; font-size: 14px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  @media (hover: hover) { .stop:hover { border-color: rgba(247,92,92,0.45); color: #f75c5c; } }
+  .stop.armed {
+    width: auto; padding: 0 10px;
+    border-color: rgba(247,92,92,0.6); background: rgba(247,92,92,0.18);
+    color: #f75c5c; font-weight: bold; font-size: 12px;
+  }
+  .stop:disabled { opacity: .4; }
+  .toast { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: #2a1a1f; border: 1px solid rgba(247,92,92,0.5); color: #f75c5c; font-size: 12px;
+    padding: 8px 14px; border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .empty-msg { color: var(--ink-3); font-style: italic; font-size: 12px; padding: 4px 2px; }
+  .offline { display: none; color: var(--critical); font-size: 11px; text-align: center; }
+  body.down .offline { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <div class="left">
+    <section class="card">
+      <div class="sphere-wrap"><canvas id="sphere" width="220" height="220" aria-label="Usage sphere"></canvas></div>
+      <div class="legend">
+        <span>ring · 7-day</span><span>water · 5-hour</span><span>number · sessions</span>
+      </div>
+      <p class="offline" id="offline">PC unreachable, showing the last data</p>
+    </section>
+    <section class="card">
+      <div class="head"><h2>Claude usage</h2><span class="muted" id="age"></span></div>
+      <div class="meter" id="m-five"></div>
+      <div class="meter" id="m-seven"></div>
+    </section>
+  </div>
+  <section class="card">
+    <div class="head"><h2>Sessions</h2><span class="muted" id="count"></span></div>
+    <div id="segbar" class="segbar empty"></div>
+    <div class="dots" id="dots"></div>
+    <div class="list" id="list" style="margin-top:14px"></div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const POLL_MS = 3000;
+const FIVE_H = 5 * 3600, WEEK = 7 * 24 * 3600, STALE_S = 40 * 60;
+const GREEN = [0.20, 0.83, 0.60], PURPLE = [0.66, 0.33, 0.97];
+const RING_OK = "250,191,64", RING_HOT = "247,92,92";
+const STATUS = {
+  busy: ["busy", "s-busy"], bg: ["background", "s-bg"], agent: ["subagent", "s-bg"],
+  waiting: ["waiting", "s-waiting"], idle: ["idle", "s-idle"],
+};
+const ORDER = ["busy", "bg", "waiting", "idle"];
+const DISARM_MS = 3000;                 // same as sphere_popup's ■
+let armed = null, disarmTimer = null, stopping = new Set();
+
+let state = null, skew = 0;             // skew = PC clock - phone clock (s)
+const now = () => Date.now() / 1000 + skew;
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function fmtLeft(s) {
+  const m = Math.max(0, Math.floor(s / 60));
+  if (m >= 1440) return `${Math.floor(m / 1440)}d ${Math.floor(m % 1440 / 60)}h`;
+  return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+}
+function fmtElapsed(since) {
+  if (!since) return "";
+  const s = Math.floor(now() - since);
+  if (s < 0) return "";
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(s / 3600)}h${String(Math.floor(s % 3600 / 60)).padStart(2, "0")}m`;
+}
+function clock(ts, withDay) {
+  const d = new Date((ts - skew) * 1000);
+  const hm = d.toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", hour12: false});
+  return withDay ? d.toLocaleDateString([], {weekday: "short"}) + " " + hm : hm;
+}
+
+// Same math as hovercard.window_stats
+function windowStats(pct, reset, length) {
+  if (pct == null || !reset) return null;
+  const t = now();
+  if (reset <= t) return {used: 0, elapsed: null, proj: null, reset, passed: true};
+  const elapsed = 1 - (reset - t) / length;
+  const proj = elapsed >= 0.05 && pct > 0 ? pct / elapsed : null;
+  return {used: pct, elapsed: Math.min(1, Math.max(0, elapsed)), proj, reset, passed: false};
+}
+
+function renderMeter(el, title, st) {
+  if (!st) { el.innerHTML = `<div class="row"><span class="title">${title}</span></div><div class="sub">no data</div>`; return; }
+  let sub;
+  if (st.passed) sub = "window has reset · waiting for a fresh snapshot";
+  else {
+    sub = `resets ${clock(st.reset, st.reset - now() > 20 * 3600)} · ${fmtLeft(st.reset - now())} left`;
+    if (st.proj != null) sub += ` · pace → ${Math.round(st.proj)}%`;
+  }
+  // Build once, then only update widths so the CSS transitions glide.
+  if (!el.firstChild || !el.querySelector(".bar")) {
+    el.innerHTML = `<div class="row"><span class="title">${title}</span><span class="pct"></span></div>
+      <div class="bar"><div class="proj" style="width:0"></div><div class="used" style="width:0"></div><div class="pace" style="left:0;display:none"></div></div>
+      <div class="sub"></div>`;
+  }
+  el.querySelector(".pct").textContent = `${Math.round(st.used)}%`;
+  const proj = el.querySelector(".proj");
+  const p = st.proj != null ? Math.min(100, st.proj) : 0;
+  proj.style.width = (p > st.used ? p : 0) + "%";
+  proj.classList.toggle("over", st.proj != null && st.proj > 100);
+  el.querySelector(".used").style.width = st.used + "%";
+  const pace = el.querySelector(".pace");
+  pace.style.display = st.elapsed == null ? "none" : "";
+  if (st.elapsed != null) pace.style.left = `calc(${st.elapsed * 100}% - 1px)`;
+  el.querySelector(".sub").textContent = sub;
+}
+
+function renderSessions(sessions) {
+  const counts = {};
+  for (const s of sessions) { const k = s.status === "agent" ? "bg" : s.status; counts[k] = (counts[k] || 0) + 1; }
+  document.getElementById("count").textContent = sessions.length ? `${sessions.length} running` : "";
+  const seg = document.getElementById("segbar");
+  seg.classList.toggle("empty", !sessions.length);
+  setHTML(seg, ORDER.filter(k => counts[k]).map(k => `<div class="s-${k}" style="flex-grow:${counts[k]}"></div>`).join(""));
+  setHTML(document.getElementById("dots"), ORDER.filter(k => counts[k]).map(k =>
+    `<span><span class="dot s-${k}${k === "busy" || k === "waiting" ? " pulse" : ""}"></span>${counts[k]} ${STATUS[k][0]}</span>`).join(""));
+
+  const list = document.getElementById("list");
+  if (!sessions.length) { setHTML(list, `<div class="empty-msg">no Claude sessions running</div>`); return; }
+  setHTML(list, sessions.map(s => {
+    const [label, cls] = STATUS[s.status] || [s.status, "s-idle"];
+    const live = s.status === "busy" || s.status === "waiting";
+    let st = esc(label);
+    if (s.status === "waiting" && s.waiting_for) st += ` · ${esc(s.waiting_for)}`;
+    if (s.status_since) st += ` · <span class="el" data-since="${s.status_since}"></span>`;
+    const meta = [s.model, s.cwd].filter(Boolean).map(esc);
+    if (s.status === "busy" && s.tool) meta.unshift(`<span class="tool">⚙ ${esc(s.tool)}</span>`);
+    return `<div class="sess ${esc(s.status)}">
+      <span class="dot ${cls}${live ? " pulse" : ""}"></span>
+      <div style="min-width:0">
+        <div class="top"><span class="name">${esc(s.name)}</span><span class="st">${st}</span></div>
+        ${s.task ? `<div class="task">${esc(s.task)}</div>` : ""}
+        <div class="meta">${meta.join(" · ")}</div>
+      </div>
+      <button class="stop${armed === s.id ? " armed" : ""}" data-id="${esc(s.id)}" data-name="${esc(s.name)}"
+        ${stopping.has(s.id) ? "disabled" : ""} aria-label="Stop ${esc(s.name)}">${armed === s.id ? "stop?" : "■"}</button>
+      </div>`;
+  }).join(""));
+  tickElapsed();
+}
+
+// ■ stops on the second tap; the first arms it and it disarms after DISARM_MS.
+document.getElementById("list").addEventListener("click", async e => {
+  const btn = e.target.closest(".stop");
+  if (!btn || btn.disabled) return;
+  const id = btn.dataset.id;
+  clearTimeout(disarmTimer);
+  if (armed !== id) {
+    armed = id;
+    disarmTimer = setTimeout(() => { armed = null; state && renderSessions(state.sessions); }, DISARM_MS);
+    return renderSessions(state.sessions);
+  }
+  armed = null;
+  stopping.add(id);
+  renderSessions(state.sessions);
+  try {
+    const r = await fetch("api/stop", {method: "POST", headers: {"Content-Type": "application/json"},
+                                       body: JSON.stringify({id})});
+    if (!r.ok) throw new Error(r.status === 404 ? "already gone" : `HTTP ${r.status}`);
+  } catch (err) {
+    toast(`couldn't stop ${btn.dataset.name}: ${err.message}`);
+  }
+  setTimeout(() => { stopping.delete(id); poll(); }, 800);  // give SIGTERM a moment
+});
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+// Only touch the DOM when the markup changed, so pulse animations don't restart.
+function setHTML(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
+function tickElapsed() {
+  for (const e of document.querySelectorAll(".el")) e.textContent = fmtElapsed(+e.dataset.since);
+}
+
+function render() {
+  if (!state) return;
+  const u = state.usage || {};
+  const ageEl = document.getElementById("age");
+  if (state.usage) {
+    const age = now() - (u.cached_at || 0);
+    ageEl.textContent = `snapshot ${age >= 60 ? Math.floor(age / 60) + "m ago" : "just now"}`;
+    ageEl.classList.toggle("stale", age > STALE_S);
+  } else ageEl.textContent = "no snapshot";
+  renderMeter(document.getElementById("m-five"), "5-hour window", windowStats(u.five_pct, u.five_reset, FIVE_H));
+  renderMeter(document.getElementById("m-seven"), "7-day", windowStats(u.seven_pct, u.seven_reset, WEEK));
+}
+
+// ---- sphere: a port of floatingsphere.Sphere.draw ----
+const cv = document.getElementById("sphere"), cx2 = cv.getContext("2d");
+const anim = {level: 0, color: GREEN.slice()};
+const t0 = performance.now();
+
+function sphereTargets() {
+  const u = (state && state.usage) || {};
+  let five = u.five_pct;
+  if (u.five_reset && u.five_reset < now()) five = 0;
+  const working = state ? state.sessions.some(s => s.status !== "idle") : false;
+  return [Math.max(0, Math.min(1, (five || 0) / 100)), working ? PURPLE : GREEN];
+}
+
+function drawSphere() {
+  const dpr = window.devicePixelRatio || 1, css = 220;
+  if (cv.width !== css * dpr) { cv.width = cv.height = css * dpr; }
+  const c = cx2;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, css, css);
+
+  const [lvl, col] = sphereTargets();
+  anim.level += (lvl - anim.level) * 0.06;
+  anim.color = anim.color.map((v, i) => v + (col[i] - v) * 0.08);
+
+  const u = (state && state.usage) || {}, t = now();
+  const stale = !state || !state.usage || t - (u.cached_at || 0) > STALE_S;
+  const tt = (performance.now() - t0) / 1000;
+  const RW = 14, cx = css / 2, cy = css / 2;
+  const R = css / 2 - RW / 2 - 2, r = R - RW / 2 - 8;
+
+  // 7d ring
+  c.lineWidth = RW;
+  c.strokeStyle = "rgba(255,255,255,0.13)";
+  c.beginPath(); c.arc(cx, cy, R, 0, 2 * Math.PI); c.stroke();
+  if (u.seven_pct != null) {
+    const frac = Math.max(0, Math.min(1, u.seven_pct / 100));
+    c.strokeStyle = `rgba(${u.seven_pct >= 90 ? RING_HOT : RING_OK},${stale ? 0.45 : 1})`;
+    c.lineCap = "round";
+    c.beginPath(); c.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * frac); c.stroke();
+    c.lineCap = "butt";
+  }
+  if (u.seven_reset) {
+    const e = 1 - (u.seven_reset - t) / WEEK;
+    if (e >= 0 && e <= 1) {
+      const a = -Math.PI / 2 + 2 * Math.PI * e;
+      c.lineWidth = 3; c.strokeStyle = "rgba(255,255,255,0.9)";
+      c.beginPath();
+      c.moveTo(cx + (R - RW / 2 - 2) * Math.cos(a), cy + (R - RW / 2 - 2) * Math.sin(a));
+      c.lineTo(cx + (R + RW / 2 + 2) * Math.cos(a), cy + (R + RW / 2 + 2) * Math.sin(a));
+      c.stroke();
+    }
+  }
+
+  // glass ball + water
+  c.save();
+  c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI);
+  c.fillStyle = "rgba(20,23,33,0.82)"; c.fill();
+  c.clip();
+  const top = cy + r - 2 * r * anim.level;
+  const amp = anim.level > 0.01 && anim.level < 0.99 ? 4 : 0;
+  const rgb = anim.color.map(v => Math.round(v * 255)).join(",");
+  [[1.6, 0.45, 0], [1.1, 0.9, 2]].forEach(([speed, alpha, phase], layer) => {
+    c.beginPath(); c.moveTo(cx - r, cy + r);
+    for (let x = cx - r; x <= cx + r + 2; x += 3)
+      c.lineTo(x, top + amp * Math.sin((x - cx) / r * 2.2 * Math.PI + tt * speed + phase) + layer * 3);
+    c.lineTo(cx + r, cy + r); c.closePath();
+    c.fillStyle = `rgba(${rgb},${alpha * (stale ? 0.55 : 1)})`; c.fill();
+  });
+  // 5h pace ticks on both rims
+  if (u.five_reset && u.five_reset > t) {
+    const e = 1 - (u.five_reset - t) / FIVE_H;
+    if (e >= 0 && e <= 1) {
+      const y = cy + r - 2 * r * e, half = Math.sqrt(Math.max(0, r * r - (y - cy) ** 2));
+      c.lineWidth = 3; c.strokeStyle = "rgba(255,255,255,0.85)";
+      c.beginPath();
+      c.moveTo(cx - half, y); c.lineTo(cx - half + 14, y);
+      c.moveTo(cx + half, y); c.lineTo(cx + half - 14, y);
+      c.stroke();
+    }
+  }
+  c.restore();
+  c.lineWidth = 1.5; c.strokeStyle = "rgba(255,255,255,0.25)";
+  c.beginPath(); c.arc(cx, cy, r, 0, 2 * Math.PI); c.stroke();
+
+  // session count
+  const n = state ? String(state.sessions.length) : "–";
+  c.font = `bold ${Math.round(r * 0.95)}px ui-sans-serif, system-ui, sans-serif`;
+  c.textAlign = "center"; c.textBaseline = "middle";
+  c.fillStyle = "rgba(0,0,0,0.45)"; c.fillText(n, cx + 2, cy + 3);
+  c.fillStyle = "rgba(255,255,255,0.96)"; c.fillText(n, cx, cy + 1);
+}
+
+// ~30 fps is plenty for a ripple; the browser pauses rAF in a hidden tab.
+let lastFrame = 0;
+function frame(ts) {
+  if (ts - lastFrame > 33) { lastFrame = ts; drawSphere(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+async function poll() {
+  try {
+    const r = await fetch("api/state", {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    state = await r.json();
+    skew = state.now - Date.now() / 1000;
+    document.body.classList.remove("down");
+    render();
+    renderSessions(state.sessions || []);
+  } catch (e) {
+    document.body.classList.add("down");
+  }
+}
+poll();
+setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);
+setInterval(() => { render(); tickElapsed(); }, 1000);  // tick elapsed / time-left text between polls
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+</script>
+</body>
+</html>

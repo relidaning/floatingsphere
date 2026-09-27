@@ -1,0 +1,11 @@
+[Unit]
+Description=floatingsphere web view (usage + Claude Code sessions)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /data/apps/floatingsphere/sphere_web.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

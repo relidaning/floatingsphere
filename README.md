@@ -85,6 +85,36 @@ windowrulev2 = noanim, class:^(dev.floatingsphere.popup)$
 windowrulev2 = pin, class:^(dev.floatingsphere.popup)$
 ```
 
+## Web view (phone / tablet)
+
+<img src="docs/phone.png" alt="The web view on an iPhone" width="320" align="right">
+
+The same monitor on a phone, as a home-screen web app (the screenshot is an iPhone):
+
+- **Sphere:** the same drawing as the desktop sphere. Amber ring = 7-day usage with
+  the week-elapsed tick, water = 5-hour usage with rim ticks for the time elapsed in
+  the window, and the number in the middle = running sessions.
+- **Claude usage:** the hover card's meters. For the 5-hour window and the week you
+  see used %, a white pace tick, a faint bar for the projected % at reset, the reset
+  time, the time left and "pace → N%". The snapshot's age is at the top right.
+- **Sessions:** a bar split by status, then a card per session with its name, status
+  and time in that status, current task, running tool, model and folder, plus ■ to
+  stop it.
+
+`sphere_web.py` serves the same picture as a web page: the sphere, the 5h/7d meters
+and the session list, refreshed every 3 s. Each session has the popup's ■ stop button
+(tap once to arm, again to stop); nothing can be started from it. It listens on
+`0.0.0.0:8765`; set `SPHERE_WEB_HOST` / `SPHERE_WEB_PORT` to change that. Added to an
+iPhone home screen it opens full-screen with the sphere icon (`web/make_icons.py`
+re-renders the icons).
+
+<br clear="right">
+
+```sh
+ln -s "$PWD/sphere-web.service" ~/.config/systemd/user/
+systemctl --user enable --now sphere-web
+```
+
 ## Files
 
 | File                   | Role                                                          |
@@ -95,3 +125,7 @@ windowrulev2 = pin, class:^(dev.floatingsphere.popup)$
 | `claude_sessions.py`   | Reads Claude Code's session registry and transcripts          |
 | `claude_new.sh`        | `+` button: pick a project and a task in rofi, open kitty     |
 | `rofi-claude-new.rasi` | rofi theme for `claude_new.sh`                                |
+| `sphere_web.py`        | HTTP server for the web view: `/` and `/api/state`            |
+| `web/index.html`       | The web view (canvas sphere, meters, session list)            |
+| `web/make_icons.py`    | Renders the home-screen icons and favicon into `web/`         |
+| `sphere-web.service`   | systemd user unit for `sphere_web.py`                         |
