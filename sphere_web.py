@@ -4,14 +4,17 @@
 It serves `web/index.html` (the sphere, the hover card's meters and the session list,
 redrawn in a canvas) and `/api/state`, a JSON snapshot built from the same sources as
 the desktop sphere: claude-maxer's usage snapshot and Claude Code's session registry
-(claude_sessions.collect_sessions). The one action is `POST /api/stop`, the popup's ■:
-it takes a session id and SIGTERMs that session's processes. It never starts one.
+(claude_sessions.collect_sessions). Two actions: `POST /api/stop`, the popup's ■, takes a
+session id and SIGTERMs that session's processes; `POST /api/new`, the popup's +, opens a
+kitty window on the desktop running `claude` in one of the projects under PROJECTS_ROOT.
 
 Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT override 0.0.0.0:8765)
 """
 import gzip
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +41,15 @@ STATIC_MAX_AGE = 86400
 INITIAL_MARK = b"/*INITIAL_STATE*/null"
 SNAPSHOT_PATH = os.path.expanduser("~/.claude/state/usage_snapshot.json")
 CACHE_S = 1.5  # several open tabs polling at once share one registry scan
+# Shared with claude_new.sh, so the desktop picker and the phone agree on "recent".
+PROJECTS_ROOT = os.environ.get("CLAUDE_NEW_PROJECTS_ROOT", "/data/apps")
+RECENT_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                           "claude-monitor", "recent-dirs")
+RECENT_MAX = 15
+PROMPT_MAX = 4000
+# The client picks flags by these keys; it never sends argv text.
+CLAUDE_JSON = os.path.expanduser("~/.claude.json")
+FLAGS = {"skip_permissions": "--dangerously-skip-permissions", "rc": "--remote-control"}
 
 
 def read_usage():
@@ -77,6 +89,95 @@ def build_state():
 _cache = {"at": 0.0, "body": b""}
 
 
+def _read_recent():
+    try:
+        with open(RECENT_FILE) as f:
+            return [line.strip() for line in f if line.strip()]
+    except OSError:
+        return []
+
+
+def list_projects():
+    """Project directory names under PROJECTS_ROOT, recently used first."""
+    try:
+        names = sorted(e.name for e in os.scandir(PROJECTS_ROOT)
+                       if e.is_dir() and not e.name.startswith("."))
+    except OSError:
+        return []
+    root = os.path.abspath(PROJECTS_ROOT)
+    recent = [os.path.basename(d) for d in _read_recent() if os.path.dirname(d.rstrip("/")) == root]
+    recent = [n for n in dict.fromkeys(recent) if n in names]
+    return [{"name": n, "recent": n in recent} for n in recent + [n for n in names if n not in recent]]
+
+
+def record_recent(path):
+    try:
+        os.makedirs(os.path.dirname(RECENT_FILE), exist_ok=True)
+        lines = list(dict.fromkeys([path] + _read_recent()))[:RECENT_MAX]
+        tmp = RECENT_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, RECENT_FILE)
+    except OSError:
+        pass
+
+
+def trust_project(path):
+    """Pre-answer claude's "do you trust this folder?" dialog, as pressing y would.
+
+    The answer lives in ~/.claude.json (projects[path].hasTrustDialogAccepted), a file
+    every running claude rewrites; read it right before an atomic replace so the window
+    for clobbering one of their writes is a few milliseconds.
+    """
+    try:
+        with open(CLAUDE_JSON) as f:
+            cfg = json.load(f)
+        proj = cfg.setdefault("projects", {}).setdefault(path, {})
+        if proj.get("hasTrustDialogAccepted"):
+            return
+        proj["hasTrustDialogAccepted"] = True
+        tmp = f"{CLAUDE_JSON}.tmp.sphere{os.getpid()}"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+        os.replace(tmp, CLAUDE_JSON)
+    except (OSError, ValueError, AttributeError):
+        pass  # worst case the dialog shows up and waits for a y
+
+
+def start_session(project, flags, prompt):
+    """Open kitty on the desktop running claude in PROJECTS_ROOT/<project>, like claude_new.sh."""
+    # Only a name from the listing is accepted, so the client can't point it anywhere else.
+    if project not in {p["name"] for p in list_projects()}:
+        return "no such project"
+    path = os.path.join(os.path.abspath(PROJECTS_ROOT), project)
+    trust_project(path)
+    argv = [FLAGS[k] for k in FLAGS if flags.get(k)]
+    unit = "claude-new-%s-%d" % (re.sub(r"[^A-Za-z0-9_.-]", "_", project), time.time() * 1000)
+    # systemd-run puts the terminal in its own transient unit: started straight from this
+    # service it would sit in sphere-web's cgroup and die on every restart of it.
+    # The label, flags and prompt travel as environment, never interpolated into the
+    # command string (same as claude_new.sh); `zsh -ic` sources .zshrc for the proxy
+    # exports, and `exec zsh -i` keeps the terminal open after the session ends.
+    # --expand-environment=no: systemd would otherwise eat the zsh ${...} below itself.
+    cmd = ["systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no", f"--unit={unit}",
+           f"--working-directory={path}",
+           f"--setenv=CLAUDE_NEW_LABEL={project}",
+           f"--setenv=CLAUDE_NEW_FLAGS={' '.join(argv)}",
+           f"--setenv=CLAUDE_NEW_PROMPT={prompt}",
+           "kitty", "--directory", path, "zsh", "-ic",
+           'command claude --name "$CLAUDE_NEW_LABEL" ${=CLAUDE_NEW_FLAGS} '
+           '${CLAUDE_NEW_PROMPT:+"$CLAUDE_NEW_PROMPT"}; exec zsh -i']
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"launch failed: {e}"
+    if r.returncode:
+        return "launch failed: " + (r.stderr.strip().splitlines() or ["?"])[-1]
+    record_recent(path)
+    return None
+
+
 def state_json():
     if time.monotonic() - _cache["at"] > CACHE_S:
         _cache["body"] = json.dumps(build_state()).encode()
@@ -96,6 +197,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/state":
             self._send(200, "application/json", state_json())
+        elif path == "/api/projects":
+            self._send(200, "application/json", json.dumps({"projects": list_projects()}).encode())
         elif path in STATIC:
             name, ctype = STATIC[path]
             try:
@@ -119,23 +222,27 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = -1
-        if not 0 <= length <= 4096:
+        if not 0 <= length <= 16384:
             self.close_connection = True
             return self._send(400, "text/plain", b"bad request")
         raw = self.rfile.read(length)
-        if self.path.split("?", 1)[0] != "/api/stop":
+        path = self.path.split("?", 1)[0]
+        if path not in ("/api/stop", "/api/new"):
             return self._send(404, "text/plain", b"not found")
         # Requiring a JSON body makes a cross-site request need a CORS preflight,
         # which this server never answers, so another web page open on the phone
-        # can't fire stops at it. A mismatched Origin is refused outright as well.
+        # can't fire stops or starts at it. A mismatched Origin is refused outright as well.
         origin = self.headers.get("Origin")
         if (self.headers.get("Content-Type", "").split(";")[0] != "application/json"
                 or (origin and origin.split("://", 1)[-1] != self.headers.get("Host"))):
             return self._send(403, "text/plain", b"forbidden")
         try:
-            target = json.loads(raw or b"{}").get("id")
+            body = json.loads(raw or b"{}")
+            target = body.get("id")
         except (ValueError, AttributeError):
             return self._send(400, "text/plain", b"bad request")
+        if path == "/api/new":
+            return self._new(body)
         # Resolve pids here from the live registry; the client only names a session.
         match = next((s for s in collect_sessions()
                       if (s["session_id"] or f"pid:{s['pid']}") == target), None)
@@ -143,6 +250,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, "application/json", b'{"ok": false, "error": "no such session"}')
         stop_session(match["pids"])
         _cache["at"] = 0.0  # next poll rescans instead of serving the pre-stop list
+        self._send(200, "application/json", b'{"ok": true}')
+
+    def _new(self, body):
+        project, flags, prompt = body.get("project"), body.get("flags") or {}, body.get("prompt") or ""
+        if not isinstance(project, str) or not isinstance(flags, dict) or not isinstance(prompt, str):
+            return self._send(400, "text/plain", b"bad request")
+        err = start_session(project, flags, prompt.strip()[:PROMPT_MAX])
+        if err:
+            return self._send(404 if err == "no such project" else 500, "application/json",
+                              json.dumps({"ok": False, "error": err}).encode())
+        _cache["at"] = 0.0
         self._send(200, "application/json", b'{"ok": true}')
 
     def _send(self, code, ctype, body, max_age=0):

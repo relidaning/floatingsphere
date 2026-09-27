@@ -99,11 +99,16 @@ The same monitor on a phone, as a home-screen web app (the screenshot is an iPho
   time, the time left and "pace → N%". The snapshot's age is at the top right.
 - **Sessions:** a bar split by status, then a card per session with its name, status
   and time in that status, current task, running tool, model and folder, plus ■ to
-  stop it.
+  stop it. The floating **+** at the bottom right starts a new session (see below).
 
 `sphere_web.py` serves the same picture as a web page: the sphere, the 5h/7d meters
 and the session list, refreshed every 3 s. Each session has the popup's ■ stop button
-(tap once to arm, again to stop); nothing can be started from it. It listens on
+(tap once to arm, again to stop). The floating **+** opens a sheet to start one: pick a project
+under `/data/apps` (recently used first), toggle `--dangerously-skip-permissions` (on
+by default) and `--rc` (Remote Control, so the Claude app can drive it), and
+optionally give an opening task. It opens a kitty window on the PC running
+`claude --name <project> …`, the same as the desktop popup's +. The folder is marked
+trusted first, so claude's "do you trust this folder?" dialog doesn't hold it up. It listens on
 `0.0.0.0:8765`; set `SPHERE_WEB_HOST` / `SPHERE_WEB_PORT` to change that. Added to an
 iPhone home screen it opens full-screen with the sphere icon (`web/make_icons.py`
 re-renders the icons).
@@ -125,7 +130,7 @@ systemctl --user enable --now sphere-web
 | `claude_sessions.py`   | Reads Claude Code's session registry and transcripts          |
 | `claude_new.sh`        | `+` button: pick a project and a task in rofi, open kitty     |
 | `rofi-claude-new.rasi` | rofi theme for `claude_new.sh`                                |
-| `sphere_web.py`        | HTTP server for the web view: `/` and `/api/state`            |
+| `sphere_web.py`        | HTTP server for the web view: `/`, `/api/state`, stop and new |
 | `web/index.html`       | The web view (canvas sphere, meters, session list)            |
 | `web/make_icons.py`    | Renders the home-screen icons and favicon into `web/`         |
 | `sphere-web.service`   | systemd user unit for `sphere_web.py`                         |
