@@ -9,6 +9,7 @@ it takes a session id and SIGTERMs that session's processes. It never starts one
 
 Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT override 0.0.0.0:8765)
 """
+import gzip
 import json
 import os
 import sys
@@ -32,6 +33,9 @@ STATIC = {
     "/favicon.ico": ("favicon.png", "image/png"),
     "/favicon.png": ("favicon.png", "image/png"),
 }
+# The page embeds live state and the API is live; the rest only changes on a deploy.
+STATIC_MAX_AGE = 86400
+INITIAL_MARK = b"/*INITIAL_STATE*/null"
 SNAPSHOT_PATH = os.path.expanduser("~/.claude/state/usage_snapshot.json")
 CACHE_S = 1.5  # several open tabs polling at once share one registry scan
 
@@ -73,27 +77,52 @@ def build_state():
 _cache = {"at": 0.0, "body": b""}
 
 
+def state_json():
+    if time.monotonic() - _cache["at"] > CACHE_S:
+        _cache["body"] = json.dumps(build_state()).encode()
+        _cache["at"] = time.monotonic()
+    return _cache["body"]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "sphere_web"
+    # From the phone every request crosses the sing-box/WireGuard tunnel, so a new TCP
+    # connection per request (HTTP/1.0) cost a handshake each. Keep-alive reuses them;
+    # the timeout frees the thread behind a connection the phone left idle.
+    protocol_version = "HTTP/1.1"
+    timeout = 60
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/api/state":
-            if time.monotonic() - _cache["at"] > CACHE_S:
-                _cache["body"] = json.dumps(build_state()).encode()
-                _cache["at"] = time.monotonic()
-            self._send(200, "application/json", _cache["body"])
+            self._send(200, "application/json", state_json())
         elif path in STATIC:
             name, ctype = STATIC[path]
             try:
                 with open(os.path.join(WEB_DIR, name), "rb") as f:  # re-read: edits need no restart
-                    self._send(200, ctype, f.read())
+                    body = f.read()
             except OSError:
-                self._send(404, "text/plain", b"not found")
+                return self._send(404, "text/plain", b"not found")
+            if name == "index.html":
+                # Inline the current state so the first paint doesn't wait on /api/state.
+                body = body.replace(INITIAL_MARK, state_json().replace(b"</", b"<\\/"), 1)
+                self._send(200, ctype, body)
+            else:
+                self._send(200, ctype, body, max_age=STATIC_MAX_AGE)
         else:
             self._send(404, "text/plain", b"not found")
 
     def do_POST(self):
+        # Read the body before any early return: on a kept-alive connection, unread
+        # bytes would be parsed as the next request.
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 <= length <= 4096:
+            self.close_connection = True
+            return self._send(400, "text/plain", b"bad request")
+        raw = self.rfile.read(length)
         if self.path.split("?", 1)[0] != "/api/stop":
             return self._send(404, "text/plain", b"not found")
         # Requiring a JSON body makes a cross-site request need a CORS preflight,
@@ -104,8 +133,7 @@ class Handler(BaseHTTPRequestHandler):
                 or (origin and origin.split("://", 1)[-1] != self.headers.get("Host"))):
             return self._send(403, "text/plain", b"forbidden")
         try:
-            length = min(int(self.headers.get("Content-Length") or 0), 4096)
-            target = json.loads(self.rfile.read(length) or b"{}").get("id")
+            target = json.loads(raw or b"{}").get("id")
         except (ValueError, AttributeError):
             return self._send(400, "text/plain", b"bad request")
         # Resolve pids here from the live registry; the client only names a session.
@@ -117,11 +145,19 @@ class Handler(BaseHTTPRequestHandler):
         _cache["at"] = 0.0  # next poll rescans instead of serving the pre-stop list
         self._send(200, "application/json", b'{"ok": true}')
 
-    def _send(self, code, ctype, body):
+    def _send(self, code, ctype, body, max_age=0):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
+        # The page is ~20 KB raw, more than TCP's first flight at the tunnel's MTU 1280;
+        # gzipped it fits. PNGs are already compressed.
+        if (len(body) > 1024 and not ctype.startswith("image/")
+                and "gzip" in self.headers.get("Accept-Encoding", "")):
+            body = gzip.compress(body, 6)
+            self.send_header("Content-Encoding", "gzip")
+        if not ctype.startswith("image/"):
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", f"max-age={max_age}" if max_age else "no-store")
         self.end_headers()
         self.wfile.write(body)
 
