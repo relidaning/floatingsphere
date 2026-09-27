@@ -262,6 +262,12 @@ class App(Gtk.Application):
         self.sphere = Sphere(self.state)
         self.sphere.set_cursor(Gdk.Cursor.new_from_name("pointer"))
         win.set_child(self.sphere)
+        # The sphere never needs the keyboard, but a click still focuses it, and with
+        # Hyprland's float_switch_override_focus = 0 focus then stays stuck on it (the
+        # pointer moving back onto a tiled window doesn't switch focus). `nofocus`
+        # isn't an option: it also stops pointer events, so hover and clicks die.
+        # Instead hand focus straight back to the previous window.
+        win.connect("notify::is-active", self.on_active)
 
         self.card = HoverCard(self.state)
         self.popover = Gtk.Popover(child=self.card, autohide=False, has_arrow=False,
@@ -291,6 +297,11 @@ class App(Gtk.Application):
         elif btn == 1:
             self.hide_card()
             subprocess.Popen([sys.executable, POPUP_SCRIPT], start_new_session=True,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def on_active(self, win, _pspec):
+        if win.is_active() and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            subprocess.Popen(["hyprctl", "dispatch", "focuscurrentorlast"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def on_enter(self, *_):

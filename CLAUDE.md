@@ -20,4 +20,5 @@ Floating desktop monitor for Claude subscription usage and Claude Code sessions.
 - The app sets rules at launch via `hyprctl keyword windowrulev2`, but `hyprctl reload` wipes runtime rules and the sphere then gets the user's border/shadow/blur and `inactive_opacity` 0.7 (a visible square) — so the static rules are also in dotfiles `hypr/UserConfigs/WindowRules.conf`. Only `move` stays launch-time (computed from the monitor size).
 - `move` coordinates are **monitor-relative** and must account for monitor scale.
 - Needs `nodim` + `opaque`: the user's config dims and fades inactive windows.
+- Focus: the user runs `input:float_switch_override_focus = 0`, so once a click focuses the (floating) sphere, hovering back onto a tiled window doesn't take focus back. `nofocus` is **not** a fix — it also stops pointer events (no hover, no clicks). Instead `on_active` dispatches `focuscurrentorlast` whenever the sphere becomes active.
 - Testing hover: `hyprctl dispatch movecursor` alone sends no pointer enter; a real motion is needed (a python-evdev uinput device nudging REL_X works — `/dev/uinput` is user-writable).

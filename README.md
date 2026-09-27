@@ -3,6 +3,8 @@
 A small always-on-top sphere at the right edge of the screen that shows how much of your
 Claude subscription you're using, and what your Claude Code sessions are doing.
 
+![The sphere and its hover card](docs/screenshot.png)
+
 ```
         ╭── 7-day ring: amber arc = used %, white tick = time elapsed in the week
       ╭─┴─╮
@@ -23,6 +25,9 @@ using quota faster than time is passing and will hit the limit before the reset.
 | Left-click          | Session list; click a card to jump to its terminal, `+` starts a new session |
 | Double right-click  | Quit                                                                        |
 | `SUPER` + drag      | Move (it's a normal Hyprland floating window)                               |
+
+The sphere never keeps keyboard focus: clicking it hands focus straight back to the
+window you were using.
 
 ## Data sources
 
