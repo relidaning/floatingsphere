@@ -219,6 +219,138 @@
   .empty-msg { color: var(--ink-3); font-style: italic; font-size: 12px; padding: 4px 2px; }
   .offline { display: none; color: var(--critical); font-size: 11px; text-align: center; }
   body.down .offline { display: block; }
+
+  /* chat: a session's conversation, slid in over the list (tap a card; swipe right or ‹ to go back) */
+  .sess { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  @media (hover: hover) { .sess:hover { background: rgba(255,255,255,0.06); } }
+  .sess .go-chat { color: var(--ink-4); font-size: 16px; line-height: 1; margin: 2px 0 0 2px; }
+  .chat {
+    position: fixed; left: 0; top: 0; width: 100%; height: 100%; z-index: 12;
+    display: flex; flex-direction: column; background: var(--bg);
+    transform: translateX(100%); visibility: hidden;
+    transition: transform .28s cubic-bezier(.2,.8,.2,1), visibility 0s .28s;
+    box-shadow: -12px 0 32px rgba(0,0,0,0.5);
+  }
+  body.chatting .chat { transform: none; visibility: visible; transition: transform .28s cubic-bezier(.2,.8,.2,1); }
+  body.chatting { overflow: hidden; }
+  .chat.dragging { transition: none !important; }
+  @media (prefers-reduced-motion: reduce) { .chat, body.chatting .chat { transition: none; } }
+  .c-head {
+    display: flex; align-items: center; gap: 10px; flex: none;
+    padding: max(10px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 10px max(8px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--line); background: rgba(21,22,30,0.96);
+  }
+  .c-back, .c-btn {
+    flex: none; height: 36px; min-width: 36px; padding: 0 8px; display: grid; place-items: center;
+    background: none; border: 1px solid transparent; border-radius: 10px; color: var(--ink-2);
+    font: inherit; font-size: 13px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .c-back { font-size: 26px; line-height: 1; color: var(--amber); }
+  .c-btn { border-color: var(--line); }
+  .c-btn[hidden], .key[hidden] { display: none; }
+  .c-btn.on { border-color: rgba(250,191,64,0.6); color: var(--amber); }
+  .c-btn.int { border-color: rgba(247,92,92,0.5); color: #f75c5c; }
+  .c-title { flex: 1; min-width: 0; }
+  .c-title .name { font-weight: bold; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c-title .sub { font-size: 11px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c-list {
+    flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+    padding: 14px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left));
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .c-list > * { max-width: 760px; width: 100%; margin: 0 auto; }
+  .m-user { align-self: flex-end; max-width: min(88%, 640px) !important; width: auto !important;
+    margin: 4px max(0px, calc((100% - 760px) / 2)) 0 auto !important;  /* right edge of the centered column */
+    background: rgba(250,191,64,0.13); border: 1px solid rgba(250,191,64,0.28); border-radius: 14px 14px 4px 14px;
+    padding: 8px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .m-text { overflow-wrap: anywhere; line-height: 1.5; }
+  .m-text p { margin: 0 0 8px; } .m-text p:last-child { margin-bottom: 0; }
+  .m-text ul, .m-text ol { margin: 0 0 8px; padding-left: 20px; }
+  .m-text .h { font-weight: bold; margin: 10px 0 6px; color: var(--ink); }
+  .m-text a { color: var(--amber); }
+  .m-text code, .m-user code { background: rgba(255,255,255,0.08); border-radius: 4px; padding: 0 4px; font-size: 13px; }
+  .m-text pre, .m-tool pre, .d-title, .scr {
+    margin: 0 0 8px; padding: 9px 11px; background: rgba(0,0,0,0.35); border: 1px solid var(--line);
+    border-radius: 9px; overflow-x: auto; font-size: 12px; line-height: 1.4; white-space: pre;
+  }
+  .m-text pre code { background: none; padding: 0; font-size: inherit; }
+  .m-text blockquote { margin: 0 0 8px; padding-left: 10px; border-left: 2px solid var(--ink-4); color: var(--ink-2); }
+  .m-tool { font-size: 12px; color: var(--ink-3); }
+  .m-tool summary { list-style: none; cursor: pointer; display: flex; gap: 7px; align-items: baseline; min-width: 0;
+    -webkit-tap-highlight-color: transparent; }
+  .m-tool summary::-webkit-details-marker { display: none; }
+  .m-tool .tn { color: #c58cfa; flex: none; }
+  .m-tool .ta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--ink-3); }
+  .m-tool .tr { flex: none; margin-left: auto; color: var(--ink-4); }
+  .m-tool.err .tr { color: #f75c5c; }
+  .m-tool.pending .tr::after { content: "…"; }
+  .m-tool pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); max-height: 40vh; overflow-y: auto; }
+  .m-cmd, .m-note { align-self: center; width: auto !important; font-size: 11px; color: var(--ink-3);
+    background: rgba(255,255,255,0.05); border-radius: 10px; padding: 3px 10px; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .m-cmd { color: var(--amber); }
+  .m-more { align-self: center; width: auto !important; font-size: 11px; color: var(--ink-4); font-style: italic; }
+  .c-live { flex: none; font-size: 12px; color: var(--ink-2); display: none; align-items: center; gap: 8px;
+    padding: 6px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .c-live.show { display: flex; }
+  .c-live .ask { margin-left: auto; font: inherit; font-size: 12px; font-weight: bold; color: #1a1406; background: var(--waiting);
+    border: 0; border-radius: 9px; padding: 6px 12px; cursor: pointer; }
+  .c-foot { flex: none; display: flex; gap: 8px; align-items: flex-end;
+    padding: 8px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .c-foot textarea { flex: 1; min-height: 42px; max-height: 32vh; resize: none; }
+  .c-foot .send { flex: none; width: 44px; height: 42px; border: 0; border-radius: 12px; background: var(--amber); color: #1a1406;
+    font: inherit; font-size: 18px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .c-foot .send:disabled { background: rgba(255,255,255,0.08); color: var(--ink-4); cursor: default; }
+  .c-why { flex: none; font-size: 11px; color: var(--ink-3); text-align: center; padding: 0 16px 4px; display: none; }
+  .c-why.show { display: block; }
+  .scr { flex: 1; min-height: 0; margin: 0; overflow: auto; font-size: 10.5px; border-radius: 0; border-width: 1px 0; }
+  .c-screen { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .chat.screen .c-screen { display: flex; }
+  .chat.screen .c-list, .chat.screen .c-live { display: none; }
+  .keys { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
+  .key { min-width: 44px; height: 38px; padding: 0 10px; font: inherit; font-size: 13px; color: var(--ink);
+    background: rgba(255,255,255,0.06); border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent; }
+  .key:active { background: rgba(250,191,64,0.2); }
+
+  /* dialog: the choice a session is stopped on (permission prompt, AskUserQuestion) */
+  .dlg-scrim { position: fixed; inset: 0; z-index: 14; background: rgba(5,6,9,0.6); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .dlg {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; max-height: 86vh; max-height: 86dvh;
+    display: flex; flex-direction: column; background: #15161e; border: 1px solid rgba(217,89,38,0.45); border-bottom: 0;
+    border-radius: 18px 18px 0 0;
+    padding: 8px max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    transform: translateY(105%); visibility: hidden; transition: transform .25s cubic-bezier(.2,.8,.2,1), visibility 0s .25s;
+  }
+  body.asking .dlg-scrim { opacity: 1; pointer-events: auto; }
+  body.asking .dlg { transform: none; visibility: visible; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
+  @media (min-width: 760px) {
+    .dlg { left: 50%; right: auto; bottom: auto; top: 50%; width: 520px; max-height: 84vh; border: 1px solid rgba(217,89,38,0.45);
+      border-radius: 16px; padding: 16px; transform: translate(-50%, calc(-50% + 16px)); opacity: 0; transition: transform .2s, opacity .2s, visibility 0s .2s; }
+    body.asking .dlg { transform: translate(-50%, -50%); opacity: 1; transition: transform .2s, opacity .2s; }
+  }
+  .dlg .head { margin-bottom: 8px; }
+  .dlg .head h2 { color: #ec8a5f; }
+  .d-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+  .d-tabs { font-size: 11px; color: var(--ink-3); margin-bottom: 8px; }
+  .d-title { max-height: 34vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); font-size: 12.5px; }
+  .d-rows { display: grid; gap: 6px; }
+  .d-row { display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;
+    font: inherit; color: var(--ink); background: rgba(255,255,255,0.05); border: 1px solid transparent; border-radius: 11px;
+    padding: 10px 12px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .d-row:active { background: rgba(250,191,64,0.18); }
+  .d-row.cur { border-color: rgba(250,191,64,0.45); }
+  .d-row .num { flex: none; color: var(--ink-3); min-width: 16px; }
+  .d-row .box { flex: none; width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--ink-3); display: grid; place-items: center;
+    font-size: 12px; color: #1a1406; margin-top: 1px; }
+  .d-row .box.on { background: var(--amber); border-color: var(--amber); }
+  .d-row .lb { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+  .d-row .ds { display: block; font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+  .d-row.act { background: rgba(250,191,64,0.14); border-color: rgba(250,191,64,0.55); color: var(--amber); font-weight: bold; justify-content: center; }
+  .d-free { display: flex; gap: 8px; margin-top: 6px; }
+  .d-free .field { flex: 1; }
+  .d-hint { font-size: 11px; color: var(--ink-4); margin-top: 10px; }
+  .dlg .keys { padding: 10px 0 0; }
+  .dlg.busy .d-rows { opacity: .5; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -269,6 +401,41 @@
     <div class="spacer" id="spacer"></div>
   </div>
   <button class="go" id="go" disabled>Start</button>
+</section>
+<section class="chat" id="chat" aria-label="Session chat">
+  <div class="c-head">
+    <button class="c-back" id="c-back" aria-label="Back to sessions">‹</button>
+    <div class="c-title"><div class="name" id="c-name"></div><div class="sub" id="c-sub"></div></div>
+    <button class="c-btn int" id="c-int" hidden title="Interrupt (Esc)">esc</button>
+    <button class="c-btn" id="c-scr" title="Show the terminal screen">⌨</button>
+  </div>
+  <div class="c-list" id="c-list"></div>
+  <div class="c-screen">
+    <pre class="scr" id="scr"></pre>
+    <div class="keys" id="scr-keys">
+      <button class="key" data-k="up">↑</button><button class="key" data-k="down">↓</button>
+      <button class="key" data-k="left">←</button><button class="key" data-k="right">→</button>
+      <button class="key" data-k="tab">tab</button><button class="key" data-k="shift+tab">⇧tab</button>
+      <button class="key" data-k="1">1</button><button class="key" data-k="2">2</button><button class="key" data-k="3">3</button>
+      <button class="key" data-k="escape">esc</button><button class="key" data-k="enter">enter ⏎</button>
+    </div>
+  </div>
+  <div class="c-live" id="c-live"></div>
+  <div class="c-why" id="c-why"></div>
+  <div class="c-foot">
+    <textarea class="field" id="c-in" rows="1" placeholder="Message claude…" enterkeyhint="send"></textarea>
+    <button class="send" id="c-send" aria-label="Send" disabled>↑</button>
+  </div>
+</section>
+<div class="dlg-scrim" id="dlg-scrim"></div>
+<section class="dlg" id="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-title">
+  <div class="grip"></div>
+  <div class="head"><h2 id="dlg-title">Claude is asking</h2><button class="x" id="dlg-x" aria-label="Hide">✕</button></div>
+  <div class="d-body" id="d-body"></div>
+  <div class="keys" id="d-keys">
+    <button class="key" data-k="left" id="d-prev">← prev</button><button class="key" data-k="right" id="d-next">next →</button>
+    <button class="key" data-k="escape">esc</button>
+  </div>
 </section>
 <div class="toast" id="toast"></div>
 <script>
@@ -363,10 +530,10 @@ function renderSessions(sessions) {
     if (s.status_since) st += ` · <span class="el" data-since="${s.status_since}"></span>`;
     const meta = [s.model, s.cwd].filter(Boolean).map(esc);
     if (s.status === "busy" && s.tool) meta.unshift(`<span class="tool">⚙ ${esc(s.tool)}</span>`);
-    return `<div class="sess ${esc(s.status)}">
+    return `<div class="sess ${esc(s.status)}" data-id="${esc(s.id)}">
       <span class="dot ${cls}${live ? " pulse" : ""}"></span>
       <div style="min-width:0">
-        <div class="top"><span class="name">${esc(s.name)}</span><span class="st">${st}</span></div>
+        <div class="top"><span class="name">${esc(s.name)}</span><span class="st">${st} <span class="go-chat">›</span></span></div>
         ${s.task ? `<div class="task">${esc(s.task)}</div>` : ""}
         <div class="meta">${meta.join(" · ")}</div>
       </div>
@@ -647,6 +814,392 @@ setInterval(() => { render(); tickElapsed(); }, 1000);  // tick elapsed / time-l
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 // iOS Safari ignores user-scalable=no, so block its pinch gesture directly.
 document.addEventListener("gesturestart", e => e.preventDefault());
+
+
+// ---- chat: tap a session to read its conversation, type into it, answer its dialogs ----
+// The transcript comes from /api/chat by byte offset; typing and keys go into the
+// session's kitty window on the PC (session_chat.py), as if typed there.
+const chat = {id: null, offset: null, s: null, ctl: false, dialog: null, dlgKey: null, hidden: null,
+              timer: null, busy: false, gone: false, screen: false, tools: {}, freeRow: null};
+const CHAT_FAST_MS = 1200, CHAT_IDLE_MS = 2500;
+
+function mdInline(s) {
+  return s.split(/(`[^`\n]+`)/).map((p, i) => i % 2 ? `<code>${esc(p.slice(1, -1))}</code>` : esc(p)
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s(])\*([^*\s][^*\n]*)\*(?=[\s).,:;!?]|$)/g, "$1<i>$2</i>")
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')).join("");
+}
+// Just enough markdown for claude's replies: fences, headings, lists, quotes, tables as text.
+function md(src) {
+  const out = [];
+  src.split(/^```.*$/m).forEach((part, i) => {
+    if (i % 2) { out.push(`<pre><code>${esc(part.replace(/^\n|\n$/g, ""))}</code></pre>`); return; }
+    let list = null, para = [], table = [];
+    const flushPara = () => { if (para.length) out.push(`<p>${para.map(mdInline).join("<br>")}</p>`); para = []; };
+    const flushList = () => { if (list) out.push(`<${list.tag}>${list.items.map(t => `<li>${mdInline(t)}</li>`).join("")}</${list.tag}>`); list = null; };
+    const flushTable = () => { if (table.length) out.push(`<pre>${esc(table.join("\n"))}</pre>`); table = []; };
+    const flush = () => { flushPara(); flushList(); flushTable(); };
+    for (const line of part.split("\n")) {
+      let m;
+      if (!line.trim()) { flush(); continue; }
+      if (/^\s*\|/.test(line)) { flushPara(); flushList(); table.push(line.trim()); continue; }
+      flushTable();
+      if ((m = line.match(/^#{1,6}\s+(.*)/))) { flush(); out.push(`<div class="h">${mdInline(m[1])}</div>`); }
+      else if ((m = line.match(/^\s*[-*]\s+(.*)/)) || (m = line.match(/^\s*\d+[.)]\s+(.*)/))) {
+        const tag = /^\s*\d/.test(line) ? "ol" : "ul";
+        flushPara();
+        if (!list || list.tag !== tag) { flushList(); list = {tag, items: []}; }
+        list.items.push(m[1]);
+      }
+      else if ((m = line.match(/^>\s?(.*)/))) { flush(); out.push(`<blockquote>${mdInline(m[1])}</blockquote>`); }
+      else if (list && /^\s{2,}\S/.test(line)) list.items[list.items.length - 1] += " " + line.trim();
+      else { flushList(); para.push(line); }
+    }
+    flush();
+  });
+  return out.join("");
+}
+
+function itemEl(it) {
+  const d = document.createElement("div");
+  if (it.k === "user") { d.className = "m-user"; d.innerHTML = mdInline(it.text); }
+  else if (it.k === "text") { d.className = "m-text"; d.innerHTML = md(it.text); }
+  else if (it.k === "cmd" || it.k === "note") { d.className = "m-" + it.k; d.textContent = it.text; }
+  else if (it.k === "tool") {
+    const det = document.createElement("details");
+    det.className = "m-tool pending";
+    det.innerHTML = `<summary><span class="tn">⚙ ${esc(it.name)}</span><span class="ta">${esc(it.arg)}</span><span class="tr"></span></summary>`;
+    chat.tools[it.tool] = det;
+    return det;
+  }
+  else return null;
+  return d;
+}
+function applyResult(it) {
+  const det = chat.tools[it.tool];
+  if (!det) return;
+  det.classList.remove("pending");
+  det.classList.toggle("err", it.err);
+  det.querySelector(".tr").textContent = it.err ? "✗" : "✓";
+  if (it.text && !det.querySelector("pre")) {
+    const pre = document.createElement("pre");
+    pre.textContent = it.text;
+    det.appendChild(pre);
+  }
+}
+
+const cList = $("c-list");
+const nearBottom = () => cList.scrollHeight - cList.scrollTop - cList.clientHeight < 80;
+
+function addItems(items, reset, truncated) {
+  const stick = reset || nearBottom();
+  if (reset) {
+    cList.textContent = ""; chat.tools = {};
+    if (truncated) cList.insertAdjacentHTML("beforeend", `<div class="m-more">earlier messages not shown</div>`);
+  }
+  const frag = document.createDocumentFragment();
+  for (const it of items) {
+    if (it.k === "result") { applyResult(it); continue; }  // finds its tool row even if still in frag
+    const el = itemEl(it);
+    if (el) frag.appendChild(el);
+  }
+  cList.appendChild(frag);
+  if (reset && !cList.children.length) cList.innerHTML = `<div class="m-more">nothing said yet</div>`;
+  if (stick) cList.scrollTop = cList.scrollHeight;
+}
+
+function renderChatHead() {
+  const s = chat.s;
+  if (!s) return;
+  const [label, cls] = STATUS[s.status] || [s.status, "s-idle"];
+  const live = s.status === "busy" || s.status === "waiting";
+  $("c-name").textContent = s.name;
+  let sub = chat.gone ? "ended" : label;
+  if (!chat.gone && s.status === "waiting" && s.waiting_for) sub += ` · ${s.waiting_for}`;
+  $("c-sub").innerHTML = `<span class="dot ${cls}${live && !chat.gone ? " pulse" : ""}"></span>${esc(sub)} · ${esc([s.model, s.cwd].filter(Boolean).join(" · "))}`;
+  $("c-int").hidden = !(chat.ctl && s.status === "busy") || chat.gone;
+  $("c-scr").hidden = !chat.ctl;
+  const liveEl = $("c-live");
+  let html = "";
+  if (!chat.gone && s.status === "busy")
+    html = `<span class="dot s-busy pulse"></span>working${s.tool ? ` · <span style="color:#c58cfa">⚙ ${esc(s.tool)}</span>` : ""} · <span class="el" data-since="${s.status_since}"></span>`;
+  else if (!chat.gone && s.status === "waiting")
+    html = `<span class="dot s-waiting pulse"></span>waiting${s.waiting_for ? " · " + esc(s.waiting_for) : ""}` +
+           (chat.dialog ? `<button class="ask" id="c-ask">answer</button>` : "");
+  liveEl.classList.toggle("show", !!html);
+  setHTML(liveEl, html);
+  // why the composer can't be used, if it can't
+  let why = "";
+  if (chat.gone) why = "this session has ended";
+  else if (s.headless) why = "headless run: there's no terminal to type into";
+  else if (!chat.ctl) why = "no remote control for this terminal: it was opened before kitty remote control was enabled";
+  $("c-why").textContent = why;
+  $("c-why").classList.toggle("show", !!why);
+  $("c-in").disabled = !!why;
+  $("c-in").placeholder = s.status === "busy" ? "Queue a message…" : s.status === "waiting" ? "Answer the dialog first" : "Message claude…";
+  $("c-send").disabled = !!why || !$("c-in").value.trim() || s.status === "waiting" || chat.busy;
+  tickElapsed();
+}
+
+async function chatPoll() {
+  clearTimeout(chat.timer);
+  const id = chat.id;
+  if (!id) return;
+  try {
+    const q = `api/chat?id=${encodeURIComponent(id)}` + (chat.offset != null ? `&offset=${chat.offset}` : "");
+    const r = await fetch(q, {cache: "no-store"});
+    if (id !== chat.id) return;
+    if (r.status === 404) { chat.gone = true; closeDialog(); renderChatHead(); return; }
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    if (id !== chat.id) return;
+    chat.gone = false;
+    chat.s = j.session; chat.ctl = j.ctl; chat.offset = j.offset;
+    addItems(j.items, j.reset, j.truncated);
+    setDialog(j.dialog);
+    renderChatHead();
+  } catch (e) { /* offline: keep what's shown, try again */ }
+  if (chat.screen) screenPoll();
+  if (id === chat.id && !document.hidden) {
+    const fast = chat.s && (chat.s.status === "busy" || chat.s.status === "waiting");
+    chat.timer = setTimeout(chatPoll, fast ? CHAT_FAST_MS : CHAT_IDLE_MS);
+  }
+}
+
+function openChat(id, push = true) {
+  const s = state && state.sessions.find(x => x.id === id);
+  Object.assign(chat, {id, offset: null, s: s || null, ctl: false, dialog: null, dlgKey: null, hidden: null,
+                       gone: false, screen: false, tools: {}, freeRow: null});
+  $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
+  cList.innerHTML = `<div class="m-more">loading…</div>`;
+  $("c-in").value = ""; fitInput();
+  renderChatHead();
+  document.body.classList.add("chatting");
+  if (push) history.pushState({chat: id}, "", "#" + encodeURIComponent(id));
+  chatPoll();
+}
+function closeChat() {
+  clearTimeout(chat.timer);
+  chat.id = null;
+  closeDialog();
+  document.body.classList.remove("chatting");
+  $("chat").style.transform = "";
+  document.activeElement?.blur();
+}
+// Back = history back, so the phone's own back gesture / button leaves the chat too.
+function leaveChat() { if (history.state && history.state.chat) history.back(); else closeChat(); }
+addEventListener("popstate", e => {
+  if (e.state && e.state.chat) { if (chat.id !== e.state.chat) openChat(e.state.chat, false); }
+  else if (chat.id) closeChat();
+});
+$("c-back").addEventListener("click", leaveChat);
+
+$("list").addEventListener("click", e => {
+  if (e.target.closest(".stop")) return;
+  const card = e.target.closest(".sess");
+  if (card && card.dataset.id) openChat(card.dataset.id);
+});
+
+// ---- composer ----
+function fitInput() {
+  const t = $("c-in");
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight + 2, innerHeight * 0.32) + "px";
+}
+$("c-in").addEventListener("input", () => { fitInput(); renderChatHead(); });
+$("c-in").addEventListener("keydown", e => {
+  // Enter sends on a hardware keyboard; phones insert a newline and send with ↑.
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(hover: hover)").matches) {
+    e.preventDefault(); sendPrompt();
+  }
+});
+$("c-send").addEventListener("click", sendPrompt);
+
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+async function sendPrompt() {
+  const text = $("c-in").value.trim();
+  if (!text || !chat.id || chat.busy) return;
+  chat.busy = true; renderChatHead();
+  try {
+    await post("api/send", {id: chat.id, text});
+    $("c-in").value = ""; fitInput();
+    cList.scrollTop = cList.scrollHeight;
+    setTimeout(chatPoll, 700);
+  } catch (err) { toast(`not sent: ${err.message}`); }
+  finally { chat.busy = false; renderChatHead(); }
+}
+
+async function sendKeys(steps, after = 450) {
+  if (!chat.id) return;
+  $("dlg").classList.add("busy");
+  try { await post("api/keys", {id: chat.id, steps}); }
+  catch (err) { toast(`key not sent: ${err.message}`); }
+  // the screen needs a moment to redraw before it's read again
+  setTimeout(() => { $("dlg").classList.remove("busy"); chatPoll(); }, after);
+}
+$("c-int").addEventListener("click", () => sendKeys([{key: "escape"}]));
+
+// ---- dialog ----
+function dialogKey(d) { return d ? d.title + "|" + (d.tabs || "") : null; }
+function setDialog(d) {
+  chat.dialog = d;
+  const key = dialogKey(d);
+  if (!d) { if (document.body.classList.contains("asking")) closeDialog(); chat.dlgKey = null; return; }
+  // Pop it up when it's new; one the user hid stays hidden until it changes.
+  if (key !== chat.dlgKey) { chat.dlgKey = key; if (key !== chat.hidden) openDialog(); }
+  if (document.body.classList.contains("asking")) renderDialog();
+}
+function openDialog() {
+  if (!chat.dialog) return;
+  document.activeElement?.blur();
+  chat.hidden = null;
+  document.body.classList.add("asking");
+  renderDialog();
+}
+function closeDialog(byUser) {
+  if (byUser) chat.hidden = chat.dlgKey;
+  document.body.classList.remove("asking");
+}
+function renderDialog() {
+  const d = chat.dialog;
+  if (!d) return;
+  const q = d.title.split("\n").filter(Boolean).pop() || "";
+  $("dlg-title").textContent = /permission/i.test(chat.s?.waiting_for || "") ? "Permission" : "Claude is asking";
+  const free = $("d-body").querySelector(".d-free input");
+  const draft = free ? free.value : "";
+  let html = d.tabs ? `<div class="d-tabs">${esc(d.tabs)}</div>` : "";
+  if (d.title) html += `<pre class="d-title">${esc(d.title)}</pre>`;
+  html += `<div class="d-rows">` + d.rows.map((r, i) => {
+    if (r.n == null) return `<button class="d-row act" data-i="${i}">${esc(r.label)}</button>`;
+    const mark = r.checked == null ? `<span class="num">${r.n}.</span>`
+                                   : `<span class="box${r.checked ? " on" : ""}">${r.checked ? "✓" : ""}</span>`;
+    return `<button class="d-row${r.cursor ? " cur" : ""}" data-i="${i}">${mark}
+      <span class="lb">${esc(r.label)}${r.desc ? `<span class="ds">${esc(r.desc)}</span>` : ""}</span></button>` +
+      (r.free && chat.freeRow === i ? `<div class="d-free"><input class="field" placeholder="your answer" value="${esc(draft)}">
+        <button class="key" data-free="${i}">send</button></div>` : "");
+  }).join("") + `</div>`;
+  if (d.hint) html += `<div class="d-hint">${esc(d.hint)}</div>`;
+  setHTML($("d-body"), html);
+  const multiTabs = !!d.tabs;
+  $("d-prev").hidden = $("d-next").hidden = !multiTabs;
+  if (chat.freeRow != null) $("d-body").querySelector(".d-free input")?.focus();
+}
+$("d-body").addEventListener("click", e => {
+  const d = chat.dialog;
+  if (!d) return;
+  const sendFree = e.target.closest("[data-free]");
+  if (sendFree) return answerFree(+sendFree.dataset.free);
+  const b = e.target.closest(".d-row");
+  if (!b) return;
+  const i = +b.dataset.i, r = d.rows[i];
+  if (r.free) { chat.freeRow = i; setHTML($("d-body"), ""); return renderDialog(); }
+  chat.freeRow = null;
+  if (r.n != null && r.n <= 9) return sendKeys([{key: String(r.n)}]);
+  // Rows without a number (multi-select's Submit) are reached with the arrows from the cursor.
+  const cur = Math.max(0, d.rows.findIndex(x => x.cursor));
+  const move = i - cur, key = move > 0 ? "down" : "up";
+  sendKeys([...Array(Math.abs(move)).fill({key}), {key: "enter"}], 700);
+});
+$("d-body").addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches(".d-free input")) { e.preventDefault(); answerFree(chat.freeRow); }
+});
+function answerFree(i) {
+  const d = chat.dialog, input = $("d-body").querySelector(".d-free input");
+  if (!d || i == null || !input || !input.value.trim()) return;
+  chat.freeRow = null;
+  // Picking "Type something" opens its text field; the answer goes in, Enter submits it.
+  sendKeys([{key: String(d.rows[i].n)}, {text: input.value.trim()}, {key: "enter"}], 700);
+}
+$("d-keys").addEventListener("click", e => { const k = e.target.closest("[data-k]"); if (k) sendKeys([{key: k.dataset.k}]); });
+$("dlg-x").addEventListener("click", () => closeDialog(true));
+$("dlg-scrim").addEventListener("click", () => closeDialog(true));
+$("c-live").addEventListener("click", e => { if (e.target.closest("#c-ask")) openDialog(); });
+
+// ---- raw terminal screen, for anything the chat and dialog views don't cover ----
+async function screenPoll() {
+  if (!chat.id || !chat.screen) return;
+  try {
+    const r = await fetch(`api/screen?id=${encodeURIComponent(chat.id)}`, {cache: "no-store"});
+    const j = await r.json();
+    const pre = $("scr"), stick = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+    pre.textContent = (j.text || "screen unavailable").replace(/\s+$/, "");
+    if (stick) pre.scrollTop = pre.scrollHeight;
+  } catch (e) { /* next poll */ }
+}
+$("c-scr").addEventListener("click", () => {
+  chat.screen = !chat.screen;
+  $("chat").classList.toggle("screen", chat.screen);
+  $("c-scr").classList.toggle("on", chat.screen);
+  if (chat.screen) { $("scr").textContent = "…"; screenPoll(); }
+});
+$("scr-keys").addEventListener("click", e => {
+  const k = e.target.closest("[data-k]");
+  if (k) sendKeys([{key: k.dataset.k}], 250).then(() => setTimeout(screenPoll, 300));
+});
+
+// ---- swipe right to go back to the list (the panel follows the finger) ----
+(() => {
+  const el = $("chat");
+  let x0 = null, y0 = 0, dx = 0, t0 = 0, dragging = false;
+  el.addEventListener("touchstart", e => {
+    if (e.touches.length !== 1 || document.body.classList.contains("asking")) return;
+    const t = e.touches[0];
+    // leave sideways-scrollable code and the text box alone, except from the very edge
+    if (t.clientX > 28 && e.target.closest("pre, textarea, input, .keys")) return;
+    x0 = t.clientX; y0 = t.clientY; dx = 0; t0 = Date.now(); dragging = false;
+  }, {passive: true});
+  el.addEventListener("touchmove", e => {
+    if (x0 == null) return;
+    const t = e.touches[0], mx = t.clientX - x0, my = t.clientY - y0;
+    if (!dragging) {
+      if (Math.abs(my) > 12 && Math.abs(my) > Math.abs(mx)) { x0 = null; return; }  // a scroll
+      if (mx > 12 && mx > Math.abs(my) * 1.5) { dragging = true; el.classList.add("dragging"); }
+      else return;
+    }
+    dx = Math.max(0, mx);
+    el.style.transform = `translateX(${dx}px)`;
+  }, {passive: true});
+  const end = () => {
+    if (x0 == null) return;
+    x0 = null;
+    if (!dragging) return;
+    el.classList.remove("dragging");
+    const fast = dx / Math.max(1, Date.now() - t0) > 0.5;
+    if (dx > innerWidth * 0.3 || (fast && dx > 40)) { el.style.transform = `translateX(100%)`; leaveChat(); setTimeout(() => el.style.transform = "", 300); }
+    else el.style.transform = "";
+  };
+  el.addEventListener("touchend", end);
+  el.addEventListener("touchcancel", end);
+})();
+
+// iOS leaves fixed elements under the keyboard: size the panel to the visible viewport.
+function fitChat() {
+  const c = $("chat");
+  if (!vv || innerWidth >= 760) { c.style.height = c.style.top = ""; return; }
+  c.style.height = vv.height + "px";
+  c.style.top = vv.offsetTop + "px";
+  if (document.activeElement === $("c-in") && nearBottom()) cList.scrollTop = cList.scrollHeight;
+}
+if (vv) { vv.addEventListener("resize", fitChat); vv.addEventListener("scroll", fitChat); }
+document.addEventListener("visibilitychange", () => { if (!document.hidden && chat.id) chatPoll(); });
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  if (document.body.classList.contains("asking")) closeDialog(true);
+  else if (chat.id && !document.body.classList.contains("adding")) leaveChat();
+});
+// Opened with #<session id> (a reload inside a chat): go straight back into it.
+if (location.hash.length > 1) {
+  const id = decodeURIComponent(location.hash.slice(1));
+  history.replaceState(null, "", location.pathname);
+  history.pushState({chat: id}, "", "#" + encodeURIComponent(id));
+  openChat(id, false);
+}
 </script>
 </body>
 </html>

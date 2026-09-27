@@ -8,6 +8,10 @@ the desktop sphere: claude-maxer's usage snapshot and Claude Code's session regi
 session id and SIGTERMs that session's processes; `POST /api/new`, the popup's +, opens a
 kitty window on the desktop running `claude` in one of the projects under PROJECTS_ROOT.
 
+Tapping a session opens its chat (session_chat): `GET /api/chat` streams the transcript
+by byte offset plus the dialog the session is stopped on, `POST /api/send` types a
+prompt into its kitty window and `POST /api/keys` answers a dialog.
+
 Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT override 0.0.0.0:8765)
 """
 import gzip
@@ -18,9 +22,11 @@ import subprocess
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from claude_sessions import collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
+import session_chat  # noqa: E402
 
 HOST = os.environ.get("SPHERE_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SPHERE_WEB_PORT", "8765"))
@@ -47,6 +53,8 @@ RECENT_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduse
                            "claude-monitor", "recent-dirs")
 RECENT_MAX = 15
 PROMPT_MAX = 4000
+CHAT_PROMPT_MAX = 20000
+STEPS_MAX = 24
 # The client picks flags by these keys; it never sends argv text.
 CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 FLAGS = {"skip_permissions": "--dangerously-skip-permissions", "rc": "--remote-control"}
@@ -69,8 +77,8 @@ def read_usage():
     }
 
 
-def build_state():
-    sessions = [{
+def session_json(s):
+    return {
         "id": s["session_id"] or f"pid:{s['pid']}",
         "name": s["name"],
         "cwd": shorten_path(s["cwd"]),
@@ -81,7 +89,29 @@ def build_state():
         "tool": s["tool"],
         "model": s["model"],
         "procs": len(s["pids"]),
-    } for s in collect_sessions()]
+        "headless": s["headless"],
+    }
+
+
+def find_session(target):
+    """The live session with this id; the client only ever names one, never pids."""
+    return next((s for s in collect_sessions()
+                 if (s["session_id"] or f"pid:{s['pid']}") == target), None)
+
+
+def chat_json(s, offset):
+    """New transcript items since `offset`, the session's status and any open dialog."""
+    path = session_chat.transcript_path(s["cwd"], s["session_id"]) if s["session_id"] else None
+    chat = session_chat.read_chat(path, offset) if path else {"items": [], "offset": 0, "reset": True}
+    win = None if s["headless"] else session_chat.find_window(s["pids"])
+    dialog = None
+    if win and s["status"] == "waiting":
+        dialog = session_chat.parse_dialog(session_chat.read_screen(s["pids"]))
+    return dict(chat, session=session_json(s), ctl=bool(win), dialog=dialog, now=time.time())
+
+
+def build_state():
+    sessions = [session_json(s) for s in collect_sessions()]
     # `now` lets the page compute time left against the PC's clock, not the phone's.
     return {"now": time.time(), "usage": read_usage(), "sessions": sessions}
 
@@ -194,9 +224,22 @@ class Handler(BaseHTTPRequestHandler):
     timeout = 60
 
     def do_GET(self):
-        path = self.path.split("?", 1)[0]
+        path, _, query = self.path.partition("?")
         if path == "/api/state":
             self._send(200, "application/json", state_json())
+        elif path in ("/api/chat", "/api/screen"):
+            q = parse_qs(query)
+            s = find_session((q.get("id") or [""])[0])
+            if not s:
+                return self._send(404, "application/json", b'{"ok": false, "error": "no such session"}')
+            if path == "/api/screen":
+                text = None if s["headless"] else session_chat.read_screen(s["pids"])
+                return self._send(200, "application/json", json.dumps({"text": text}).encode())
+            try:
+                offset = int((q.get("offset") or [""])[0])
+            except ValueError:
+                offset = None
+            self._send(200, "application/json", json.dumps(chat_json(s, offset)).encode())
         elif path == "/api/projects":
             self._send(200, "application/json", json.dumps({"projects": list_projects()}).encode())
         elif path in STATIC:
@@ -227,7 +270,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, "text/plain", b"bad request")
         raw = self.rfile.read(length)
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/stop", "/api/new"):
+        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys"):
             return self._send(404, "text/plain", b"not found")
         # Requiring a JSON body makes a cross-site request need a CORS preflight,
         # which this server never answers, so another web page open on the phone
@@ -244,10 +287,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/new":
             return self._new(body)
         # Resolve pids here from the live registry; the client only names a session.
-        match = next((s for s in collect_sessions()
-                      if (s["session_id"] or f"pid:{s['pid']}") == target), None)
+        match = find_session(target)
         if not match:
             return self._send(404, "application/json", b'{"ok": false, "error": "no such session"}')
+        if path in ("/api/send", "/api/keys"):
+            return self._type(path, match, body)
         stop_session(match["pids"])
         _cache["at"] = 0.0  # next poll rescans instead of serving the pre-stop list
         self._send(200, "application/json", b'{"ok": true}')
@@ -262,6 +306,32 @@ class Handler(BaseHTTPRequestHandler):
                               json.dumps({"ok": False, "error": err}).encode())
         _cache["at"] = 0.0
         self._send(200, "application/json", b'{"ok": true}')
+
+    def _type(self, path, s, body):
+        """Type into the session's terminal: a prompt (/api/send) or dialog keys (/api/keys)."""
+        if s["headless"]:
+            return self._fail(409, "headless session: nothing to type into")
+        if path == "/api/send":
+            text = body.get("text")
+            if not isinstance(text, str) or not text.strip() or len(text) > CHAT_PROMPT_MAX:
+                return self._send(400, "text/plain", b"bad request")
+            # Typed into an open dialog, the prompt would pick options instead.
+            if s["status"] == "waiting":
+                return self._fail(409, "it's waiting on a dialog: answer that first")
+            ok = session_chat.send_prompt(s["pids"], text.strip())
+        else:
+            steps = body.get("steps")
+            if (not isinstance(steps, list) or not 0 < len(steps) <= STEPS_MAX
+                    or not all(isinstance(x, dict) for x in steps)):
+                return self._send(400, "text/plain", b"bad request")
+            ok = session_chat.send_steps(s["pids"], steps)
+        if not ok:
+            return self._fail(409, "no kitty window with remote control for this session")
+        _cache["at"] = 0.0
+        self._send(200, "application/json", b'{"ok": true}')
+
+    def _fail(self, code, error):
+        self._send(code, "application/json", json.dumps({"ok": False, "error": error}).encode())
 
     def _send(self, code, ctype, body, max_age=0):
         self.send_response(code)

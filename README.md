@@ -100,6 +100,8 @@ The same monitor on a phone, as a home-screen web app (the screenshot is an iPho
 - **Sessions:** a bar split by status, then a card per session with its name, status
   and time in that status, current task, running tool, model and folder, plus ■ to
   stop it. The floating **+** at the bottom right starts a new session (see below).
+- **Chat:** tap a session to open its conversation. You can type prompts into it and
+  answer the choices it stops on. Swipe right, or tap ‹, to go back to the list (see below).
 
 `sphere_web.py` serves the same picture as a web page: the sphere, the 5h/7d meters
 and the session list, refreshed every 3 s. Each session has the popup's ■ stop button
@@ -120,6 +122,39 @@ ln -s "$PWD/sphere-web.service" ~/.config/systemd/user/
 systemctl --user enable --now sphere-web
 ```
 
+### Chat with a session
+
+Tapping a session card slides in its conversation:
+- your prompts appear as bubbles, Claude's replies are rendered as markdown, and each
+  tool call is a row (tap it to see the result);
+- a line at the bottom shows what it's doing now (working · tool · time).
+
+Type in the box and press ↑ to send the prompt. It is typed into the session's kitty
+window on the PC, as if you typed it there. While Claude is working, a message you
+send is queued for its next turn, and **esc** interrupts it.
+
+When the session stops on a choice, such as a permission prompt ("Do you want to
+proceed?") or a question from AskUserQuestion, a sheet pops up with the options:
+- tap one to answer;
+- multi-select questions show checkboxes and a **Submit** row;
+- "Type something" opens a text field;
+- **← prev / next →** move between the tabs of a multi-question form.
+
+Hiding the sheet leaves an **answer** button at the bottom. The ⌨ button shows the raw
+terminal screen with arrow, tab, digit, esc and enter keys, for anything else, such as
+a `/model` menu.
+
+Swipe right anywhere on the chat (or use ‹, or the phone's back gesture) to return
+to the list.
+
+This needs kitty remote control. The dotfiles `kitty.conf` enables it on a private
+socket (`allow_remote_control socket-only`,
+`listen_on unix:${XDG_RUNTIME_DIR}/kitty-{kitty_pid}`). kitty only opens that socket
+at startup, so sessions in kitty windows opened before that change can be read but
+not typed into. The chat says so. The conversation comes from the session's transcript
+(`~/.claude/projects/…/<sessionId>.jsonl`). Dialogs are read off the terminal screen,
+because they aren't in the transcript until they're answered.
+
 ## Files
 
 | File                   | Role                                                          |
@@ -130,7 +165,8 @@ systemctl --user enable --now sphere-web
 | `claude_sessions.py`   | Reads Claude Code's session registry and transcripts          |
 | `claude_new.sh`        | `+` button: pick a project and a task in rofi, open kitty     |
 | `rofi-claude-new.rasi` | rofi theme for `claude_new.sh`                                |
-| `sphere_web.py`        | HTTP server for the web view: `/`, `/api/state`, stop and new |
-| `web/index.html`       | The web view (canvas sphere, meters, session list)            |
+| `sphere_web.py`        | HTTP server for the web view: `/`, `/api/state`, stop, new, chat |
+| `session_chat.py`      | Chat backend: transcript → chat items, kitty typing, dialog parsing |
+| `web/index.html`       | The web view (canvas sphere, meters, session list, chat)      |
 | `web/make_icons.py`    | Renders the home-screen icons and favicon into `web/`         |
 | `sphere-web.service`   | systemd user unit for `sphere_web.py`                         |

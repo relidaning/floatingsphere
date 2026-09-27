@@ -1,5 +1,26 @@
 # Sessions
 
+## 2026-09-28 — Chat with a session from the phone
+Tapping a session in the web view now opens a chat panel:
+- **Conversation:** the transcript, incremental by byte offset.
+- **Composer:** prompts are typed into the session's kitty window through kitty remote control.
+- **Dialogs:** permission prompts and AskUserQuestion are parsed off the terminal screen and shown as a pop-up sheet, including multi-select, the Submit row and "Type something" free text.
+- **⌨ view:** the raw screen with a key pad.
+- **Leaving:** swipe right, ‹, or the phone's back gesture.
+
+New `session_chat.py`, endpoints `/api/chat`, `/api/screen`, `/api/send`, `/api/keys`, and `allow_remote_control socket-only` + `listen_on` added to the dotfiles `kitty.conf`. Only kitty windows started after that change can be typed into. Claude Code's peer messaging socket was looked at and rejected: it sends untrusted peer messages and can't answer dialogs.
+
+Tested end to end with a haiku session in a fresh kitty, in headless Chromium at 390px and 1280px: send, permission Yes, single-select, multi-select + Submit, free text, swipe back and ‹. Not tested on a real phone.
+
+## 2026-09-27 — Interactive session view from the phone (started, not finished)
+Goal: tap a session in the web view to open an interactive screen (send prompts, read replies, choose options in a dialog, swipe back to the list). Only exploration so far: after looking into Claude Code's uds messaging sockets, the chosen route was kitty remote control, turned on in the dotfiles `kitty/kitty.conf` (`allow_remote_control socket-only`, `listen_on unix:${XDG_RUNTIME_DIR}/kitty-{kitty_pid}`; not committed), and `kitty @ send-text`/`send-key`/`get-text` were tested against a throwaway haiku claude started through `systemd-run` (a plain launch picked up this session's env). No floatingsphere code changed, and the test `rctest` claude/kitty (pid 568224) was left running.
+
+## 2026-09-27 — Fix purple water with no working sessions
+The water turned purple because a jellyfin-web session reported a new registry status, `"shell"` (the turn was over but a background `webpack serve` was still running), and `floatingsphere.py` treats anything that isn't `idle` as working. `collect_sessions()` now maps every interactive status other than `busy`/`waiting` to `idle`, so the sphere, hover card, popup and web view agree even if more statuses appear later. `sphere-web.service` was restarted; the desktop sphere needed a manual restart to load the fix.
+
+## 2026-09-27 — Release v0.03 (start sessions from the phone)
+Committed the + sheet, floating button and auto-trust work as `1399aa1`, pushed `master`, and pushed an annotated tag `v0.03` (annotated to match the earlier tags). The earlier tags are named inconsistently (`v0.01`, `v0.0.2`); `v0.03` was used exactly as the user asked.
+
 ## 2026-09-27 — Web + sheet: floating button, typing, auto-trust
 Moved + out of the Sessions header into a floating round button at the bottom right (thumb reach; hidden while the sheet is open, toast moved above it). Focusing the opening task scrolls it to the top of the sheet (a spacer gives the room), and on phones the sheet is fitted to `visualViewport` so iOS's keyboard doesn't cover it. `start_session()` now pre-accepts claude's workspace trust dialog by setting `hasTrustDialogAccepted` in `~/.claude.json`. Verified with a launch into the untrusted `blank_dir` (went straight to the prompt, screenshot via grim) and the layout in headless Chrome with a shrunken viewport, not on a real phone.
 
