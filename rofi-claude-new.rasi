@@ -1,0 +1,40 @@
+/* Rofi config for the floating sphere popup's "+" new-session picker
+   (claude_new.sh). Inherits the active KooL theme; the
+   placeholder text is overridden per step with -theme-str. */
+
+@import "~/.config/rofi/config.rasi"
+
+/* ---- Window ---- */
+window {
+    width: 40%;
+    height: inherit;
+    y-offset: 10px;
+    location: north;
+    border: 2px;
+    border-color: white/25%;
+}
+
+mainbox {
+    children: [ "inputbar", "listview" ];
+}
+
+/* ---- Entry ---- */
+entry {
+    expand: true;
+    placeholder: "  project directory";
+    padding: 12px;
+}
+
+/* ---- Listview ---- */
+listview {
+    fixed-columns: false;
+    columns: 1;
+    lines: 8;
+    spacing: 4px;
+    scrollbar: true;
+    cycle: true;
+}
+
+element-icon {
+    size: 0%;
+}
