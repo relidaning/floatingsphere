@@ -253,6 +253,11 @@ def collect_sessions():
             status_since = (info.get("startedAt") or 0) / 1000
         else:
             status = info.get("status") or "idle"
+            # Claude Code adds statuses over time: "shell" means the turn is
+            # over but a background shell (e.g. a dev server) is still running.
+            # Anything that isn't busy/waiting leaves the session at the prompt.
+            if status not in ("busy", "waiting"):
+                status = "idle"
             status_since = (info.get("statusUpdatedAt") or 0) / 1000
             updated = (info.get("updatedAt") or 0) / 1000
             if updated and now - updated > STALE_AFTER_S:
