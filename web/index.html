@@ -606,7 +606,7 @@ async function openSheet() {
     if (!projects.length) $("projects").innerHTML = `<div class="empty-msg">couldn't list projects: ${esc(err.message)}</div>`;
   }
 }
-function closeSheet() { document.body.classList.remove("adding"); document.activeElement?.blur(); fitSheet(); }
+function closeSheet() { document.body.classList.remove("adding"); document.activeElement?.blur(); fitSheet(); maybeReload(); }
 
 // Typing the opening task: keep the sheet above the on-screen keyboard (iOS leaves
 // fixed elements under it) and scroll the task field to the top of the sheet.
@@ -809,6 +809,7 @@ function apply(s) {
   document.body.classList.remove("down");
   render();
   renderSessions(state.sessions || []);
+  if (PAGE_V && state.v > PAGE_V) { updateReady = true; maybeReload(); }
 }
 
 async function poll() {
@@ -823,10 +824,35 @@ async function poll() {
 // sphere_web fills this in when serving the page, so the first paint needs no second
 // round trip over the phone's tunnel; opened any other way it stays null and we poll.
 const INITIAL = /*INITIAL_STATE*/null;
+// Self-update: sphere_web stamps the page with its version (the files' mtime) and sends
+// the current one in every /api/state. The home-screen app never reloads on its own,
+// so when the PC has a newer page, reload at a moment it won't disturb anything.
+const PAGE_V = /*PAGE_V*/0;
+let updateReady = false, shownAt = Date.now();
+function maybeReload() {
+  if (!updateReady) return;
+  const b = document.body.classList, input = $("c-in");
+  // (A draft only counts in an open chat: opening any chat empties the box anyway.)
+  if (b.contains("adding") || b.contains("asking") || (chat.id && input.value.trim()) || document.activeElement === input) return;
+  // Inside a chat only right after coming back to the app, so the view never jumps
+  // while being read. The reload reopens the chat from #<id>.
+  if (chat.id && Date.now() - shownAt > 4000) return;
+  updateReady = false;
+  if (chat.id && chat.fromNotif) {
+    // Keep "open at my last message" across the reload.
+    caches.open("sphere-nav").then(c => c.put("/pending-open", new Response(JSON.stringify({id: chat.id, at: Date.now()}))))
+      .catch(() => {}).finally(() => location.reload());
+  } else location.reload();
+}
 if (INITIAL) apply(INITIAL); else poll();
 setInterval(() => { if (!document.hidden) poll(); }, POLL_MS);
 setInterval(() => { render(); tickElapsed(); }, 1000);  // tick elapsed / time-left text between polls
-document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  shownAt = Date.now();
+  poll();
+  navigator.serviceWorker?.getRegistration().then(r => r && r.update()).catch(() => {});
+});
 // iOS Safari ignores user-scalable=no, so block its pinch gesture directly.
 document.addEventListener("gesturestart", e => e.preventDefault());
 
@@ -920,7 +946,18 @@ function addItems(items, reset, truncated) {
   }
   cList.appendChild(frag);
   if (reset && !cList.children.length) cList.innerHTML = `<div class="m-more">nothing said yet</div>`;
+  if (reset && chat.toMine && scrollToMine()) return;
   if (stick) cList.scrollTop = cList.scrollHeight;
+}
+// Opened from a notification: start at the user's last message, so the reply it
+// announces reads from its beginning rather than from the bottom of the chat.
+function scrollToMine() {
+  chat.toMine = false;
+  const mine = cList.querySelectorAll(".m-user");
+  const el = mine[mine.length - 1];
+  if (!el) return false;
+  cList.scrollTop += el.getBoundingClientRect().top - cList.getBoundingClientRect().top - 12;
+  return true;
 }
 
 function renderChatHead() {
@@ -984,7 +1021,7 @@ async function chatPoll() {
 function openChat(id, push = true) {
   const s = state && state.sessions.find(x => x.id === id);
   Object.assign(chat, {id, offset: null, s: s || null, ctl: false, dialog: null, dlgKey: null, hidden: null,
-                       gone: false, screen: false, tools: {}, freeRow: null});
+                       gone: false, screen: false, tools: {}, freeRow: null, toMine: false, fromNotif: false});
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
   cList.innerHTML = `<div class="m-more">loading…</div>`;
   $("c-in").value = ""; fitInput();
@@ -1000,6 +1037,7 @@ function closeChat() {
   document.body.classList.remove("chatting");
   $("chat").style.transform = "";
   document.activeElement?.blur();
+  maybeReload();
 }
 // Back = history back, so the phone's own back gesture / button leaves the chat too.
 function leaveChat() { if (history.state && history.state.chat) history.back(); else closeChat(); }
@@ -1017,9 +1055,15 @@ $("list").addEventListener("click", e => {
 
 // ---- composer ----
 function fitInput() {
-  const t = $("c-in");
+  // Measuring means collapsing the box to "auto" for a moment, which grows the list and
+  // clamps its scroll position; put it back so the conversation doesn't jump per key.
+  const t = $("c-in"), top = cList.scrollTop, stick = nearBottom();
+  const h = t.style.height;
   t.style.height = "auto";
-  t.style.height = Math.min(t.scrollHeight + 2, innerHeight * 0.32) + "px";
+  const want = Math.min(t.scrollHeight + 2, innerHeight * 0.32) + "px";
+  t.style.height = want;
+  if (want !== h && stick) cList.scrollTop = cList.scrollHeight;
+  else cList.scrollTop = top;
 }
 $("c-in").addEventListener("input", () => { fitInput(); renderChatHead(); });
 $("c-in").addEventListener("keydown", e => {
@@ -1194,12 +1238,17 @@ $("scr-keys").addEventListener("click", e => {
 })();
 
 // iOS leaves fixed elements under the keyboard: size the panel to the visible viewport.
-function fitChat() {
+function fitChat(e) {
   const c = $("chat");
   if (!vv || innerWidth >= 760) { c.style.height = c.style.top = ""; return; }
-  c.style.height = vv.height + "px";
-  c.style.top = vv.offsetTop + "px";
-  if (document.activeElement === $("c-in") && nearBottom()) cList.scrollTop = cList.scrollHeight;
+  // iOS fires these continuously (fractional values) while it pans to keep the caret in
+  // view; only whole-pixel changes are applied, so the panel doesn't chase sub-pixel noise.
+  const h = Math.round(vv.height) + "px", top = Math.round(vv.offsetTop) + "px";
+  if (c.style.height !== h) c.style.height = h;
+  if (c.style.top !== top) c.style.top = top;
+  // Keep the newest messages in view when the keyboard opens or closes (a resize), not on
+  // every pan, which would pull the list down while typing.
+  if (e && e.type === "resize" && document.activeElement === $("c-in") && nearBottom()) cList.scrollTop = cList.scrollHeight;
 }
 if (vv) { vv.addEventListener("resize", fitChat); vv.addEventListener("scroll", fitChat); }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && chat.id) chatPoll(); });
@@ -1229,14 +1278,33 @@ if (canPush) {
     setBell(!!sub);
     if (sub) pushApi("api/push/on", sub).catch(() => {});  // re-register it in case the PC forgot it
   }).catch(() => {});
-  // A notification tapped while the app is open: jump to that session's chat.
-  navigator.serviceWorker.addEventListener("message", e => {
-    const id = e.data && e.data.open;
-    if (!id || chat.id === id) return;
+  // A tapped notification: sw.js posts {open: id} to an open app and also leaves the id
+  // in Cache Storage, which is what survives on iOS (see openSession in sw.js).
+  navigator.serviceWorker.addEventListener("message", e => { if (e.data && e.data.open) takePending(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) takePending(); });
+  addEventListener("focus", takePending);
+  takePending();
+}
+async function takePending() {
+  let got;
+  try {
+    const c = await caches.open("sphere-nav");
+    const r = await c.match("/pending-open");
+    if (!r) return;
+    await c.delete("/pending-open");
+    got = await r.json();
+  } catch (_) { return; }
+  if (got && got.id && Date.now() - got.at < 5 * 60e3) openFromNotification(got.id);
+}
+function openFromNotification(id) {
+  if (chat.id !== id) {
     // From inside another chat, take its place, so back still leads to the list.
     if (chat.id) { history.replaceState({chat: id}, "", "#" + encodeURIComponent(id)); openChat(id, false); }
     else openChat(id);
-  });
+  }
+  // The #<id> cold start may have opened (and even drawn) the chat already.
+  chat.toMine = chat.fromNotif = true;
+  if (chat.offset != null) scrollToMine();
 }
 bell.addEventListener("click", async () => {
   if (!canPush) {

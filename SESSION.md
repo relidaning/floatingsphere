@@ -1,5 +1,33 @@
 # Sessions
 
+## 2026-09-28 — Jumping chat while typing; the slow notification tap traced
+The user saw the conversation jump while typing on the iPhone, and a notification tap took ~10 s again. The jumping was fixed in two places:
+- **`fitInput()`:** it restores the list's scroll position after the "auto" measuring collapse, or sticks to the bottom if it was there.
+- **`fitChat()`:** it applies only whole-pixel changes of `visualViewport` and scrolls to the bottom only on a `resize` (keyboard open/close), not on every iOS pan.
+
+A temporary phone-side trace (the page and SW beaconing to `/api/trace`, plus per-request server logs) showed the next tap was fast: first connection 10:14:20.1, chat drawn ~0.8 s later, and no scroll movement at all while typing. It also showed that iOS booted the app without the `#<id>` (start_url), and the Cache Storage handoff opened the chat. The slow tap was never captured, and its cause is unknown; it's probably phone side (a PWA cold start or tunnel reconnect). All tracing was removed.
+
+## 2026-09-28 — Faster loading over HTTPS
+The user found the home-screen app slow to open. Every HTTPS response took ~43 ms even locally, while plain HTTP took ~1 ms. `http.server` writes headers and body separately, which over TLS are two records, and Nagle held the body until the client's delayed ACK, on every request (worse from the phone over the tunnel). Setting `disable_nagle_algorithm = True` on the handler brought it to 3–5 ms. Also confirmed TLS 1.3 session resumption works. A headless Chrome waterfall at 150 ms simulated latency shows the list at ~250 ms and a chat's messages one round trip later. A second reopen from the phone still took ~10 s. So a temporary request trace (per connection and request: arrival, server time, TLS errors) was added, and the next reopen was under 1 s. The trace showed every phone request served in ≤30 ms with ~0.03 s connection setup, so the earlier 10 s wasn't on the PC side; it wasn't captured, and the cause is unknown (possibly the phone's tunnel reconnecting). The trace was removed afterwards.
+
+## 2026-09-28 — The web app picks up new versions by itself
+The user asked whether they had to close and reopen the home-screen app after each change, and wanted it to happen automatically. sphere_web now stamps the page with `web_version()` (mtime of `index.html`/`sw.js`) and sends `v` in `/api/state`. When it's newer, the page reloads at a safe moment: never with the sheet or a dialog open or while typing, and inside a chat only right after the app comes back to the foreground. On resume it also checks for a new service worker. Testing turned up that a draft left in a closed chat's box blocked updates indefinitely; now only a draft in an open chat counts. Checked in headless Chrome: on the list it reloads; while reading a chat, or on resume with a draft, it doesn't; leaving the chat reloads; resuming into a chat reloads and reopens it; a pending notification tap still lands on the last message; no reload loop.
+
+## 2026-09-28 — A notification opens the chat at your last message
+Tapping a notification used to open the chat scrolled to the bottom, the same place every time. Now `openFromNotification()` sets `chat.toMine`, and the first render (or the already-drawn chat, on the `#<id>` cold start) scrolls the user's last `.m-user` message to the top, so the reply reads from its start. Opening from the list still goes to the bottom. Later polls don't pull the view down, because it isn't near the bottom. Checked in headless Chrome on a session with a long reply: from the list, the last message is 1025px above the view; from a notification, it's at the top. Same for the app-open and both cold-start paths.
+
+## 2026-09-28 — Notifications as quick as the water
+The user noticed notifications arrived much later than the water changed color. Measured: a turn that ended at 09:23:07 notified at 09:24:38. That's a 3s poll plus the 6s settle plus the 90s hold for a focused terminal, and the session in use is nearly always the focused one. The focus logic is removed (`focused_pid`/`is_focused`/`FOCUSED_WAIT_S`), the poll is 1s (a scan is ~0.1 ms), and the settle is 3s, so the expected latency is about 3–4s plus Apple's delivery.
+
+## 2026-09-28 — Stop the repeated "Notifications enabled" push
+The user kept getting a second notification, "Notifications enabled", alongside each real one. The page re-posts its subscription to `/api/push/on` every time it opens, and the server sent the confirmation push on every such call; tapping a notification opens the app, so each tap brought another. `webpush.add()` now returns whether the device is new, and only a new device gets the confirmation. Turning it off and on again still does.
+
+## 2026-09-28 — Missing "Completed" for the focused session
+The user got no notification after subscribing on the iPhone (09:16, Apple endpoint). The cause: the only session that finished was the one whose kitty window was focused on the desktop, and the notifier skipped "Completed" for focused sessions. The last-focused window stays focused after you walk away, so that rule silenced exactly the session in use. Focused sessions now wait `FOCUSED_WAIT_S` (90s) before either kind of notice; a new prompt in that time cancels it. `notify.py`/`webpush.py` now log each send and "no subscribed devices" to the journal. A test push with this session's id was accepted by Apple (201).
+
+## 2026-09-28 — Notification tap opens the session on iOS
+On the iPhone, tapping a notification opened the app but not the session's chat. The likely causes are that iOS drops the service worker's `postMessage` to a suspended app, and that it can open a closed PWA on `start_url` instead of the `#<id>` passed to `openWindow`. Now `openSession()` in `sw.js` also stores `{id, at}` under `/pending-open` in Cache Storage (`sphere-nav`). The page reads and deletes it on load, `visibilitychange`, `focus` and on the SW message, and ignores it after 5 min. Tested in headless Chrome by simulating both failures (stored id + focus event; cold open of `/` without a hash), plus the normal path, back to the list, and a stale entry. Not yet confirmed on the iPhone.
+
 ## 2026-09-28 — Plainer notification wording
 The user found the notifications childish (emoji, checkbox symbols, numbered options) and asked for something more grown-up. Now:
 - **Title:** the session name.

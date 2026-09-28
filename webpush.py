@@ -143,9 +143,13 @@ def _save_subs(subs):
 
 
 def add(sub):
+    """Keep a subscription; True if this device wasn't subscribed before."""
     with _lock:
-        subs = [s for s in load_subs() if s["endpoint"] != sub["endpoint"]]
+        subs = load_subs()
+        if any(s["endpoint"] == sub["endpoint"] for s in subs):
+            return False
         _save_subs((subs + [dict(sub, added=time.time())])[-SUBS_MAX:])
+        return True
 
 
 def remove(endpoint):
@@ -173,7 +177,10 @@ def send(sub, data):
 
 def send_all(data):
     """Push to every subscribed device, dropping the ones the push service says are gone."""
-    for sub in load_subs():
+    subs = load_subs()
+    if not subs:
+        print("push: no subscribed devices", flush=True)
+    for sub in subs:
         code = send(sub, data)
         if code in (404, 410):  # unsubscribed / app removed from the home screen
             remove(sub["endpoint"])

@@ -59,6 +59,7 @@ STATIC = {
 # The page embeds live state and the API is live; the rest only changes on a deploy.
 STATIC_MAX_AGE = 86400
 INITIAL_MARK = b"/*INITIAL_STATE*/null"
+VERSION_MARK = b"/*PAGE_V*/0"
 SNAPSHOT_PATH = os.path.expanduser("~/.claude/state/usage_snapshot.json")
 CACHE_S = 1.5  # several open tabs polling at once share one registry scan
 # Shared with claude_new.sh, so the desktop picker and the phone agree on "recent".
@@ -124,10 +125,19 @@ def chat_json(s, offset):
     return dict(chat, session=session_json(s), ctl=bool(win), dialog=dialog, now=time.time())
 
 
+def web_version():
+    """When the page or its service worker last changed (ms). An open page that sees a
+    newer one in /api/state reloads itself, so edits reach the phone's home-screen app."""
+    try:
+        return max(int(os.stat(os.path.join(WEB_DIR, n)).st_mtime * 1000) for n in ("index.html", "sw.js"))
+    except OSError:
+        return 0
+
+
 def build_state():
     sessions = [session_json(s) for s in collect_sessions()]
     # `now` lets the page compute time left against the PC's clock, not the phone's.
-    return {"now": time.time(), "usage": read_usage(), "sessions": sessions}
+    return {"now": time.time(), "usage": read_usage(), "sessions": sessions, "v": web_version()}
 
 
 _cache = {"at": 0.0, "body": b""}
@@ -236,6 +246,10 @@ class Handler(BaseHTTPRequestHandler):
     # the timeout frees the thread behind a connection the phone left idle.
     protocol_version = "HTTP/1.1"
     timeout = 60
+    # Headers and body go out as separate writes; over TLS each is its own record, and
+    # Nagle held the body back until the phone ACKed the headers, which a delayed ACK
+    # makes ~40 ms locally and a tunnel round trip more from the phone, on every request.
+    disable_nagle_algorithm = True
 
     def do_GET(self):
         path, _, query = self.path.partition("?")
@@ -271,6 +285,7 @@ class Handler(BaseHTTPRequestHandler):
             elif name == "index.html":
                 # Inline the current state so the first paint doesn't wait on /api/state.
                 body = body.replace(INITIAL_MARK, state_json().replace(b"</", b"<\\/"), 1)
+                body = body.replace(VERSION_MARK, str(web_version()).encode(), 1)
                 self._send(200, ctype, body)
             else:
                 self._send(200, ctype, body, max_age=STATIC_MAX_AGE)
@@ -358,8 +373,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._fail(400, "not a push subscription")
         if path == "/api/push/off":
             webpush.remove(sub["endpoint"])
-        else:
-            webpush.add(sub)
+        # The page re-sends its subscription every time it opens (in case this side lost
+        # it), so only a device that's new here gets the confirmation.
+        elif webpush.add(sub):
             threading.Thread(target=webpush.send, daemon=True, args=(sub, {
                 "title": "Notifications enabled",
                 "body": "You'll be notified when a session completes or needs your input.",

@@ -18,9 +18,17 @@ self.addEventListener("notificationclick", e => {
   e.waitUntil(openSession(e.notification.data && e.notification.data.id));
 });
 
-// Bring the app up on that session's chat: the open window if there is one (the page
-// handles {open: id}), else a new one on #<id>, which the page opens straight into.
+// Bring the app up on that session's chat. iOS can lose a postMessage to a suspended
+// app and can open a closed one on start_url instead of the #<id> asked for, so the id
+// is also left in Cache Storage (PENDING): the page takes it whenever it loads or
+// comes to the foreground. The message and the #<id> are the quick paths on top.
+const NAV_CACHE = "sphere-nav", PENDING = "/pending-open";
 async function openSession(id) {
+  if (id) {
+    const c = await caches.open(NAV_CACHE);
+    await c.put(PENDING, new Response(JSON.stringify({id, at: Date.now()}),
+                                      {headers: {"Content-Type": "application/json"}}));
+  }
   const wins = await self.clients.matchAll({type: "window", includeUncontrolled: true});
   if (wins.length) {
     const w = await wins[0].focus().catch(() => wins[0]);

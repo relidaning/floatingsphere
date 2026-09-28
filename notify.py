@@ -11,26 +11,23 @@ The title is the session's name. Text is kept plain (markdown and terminal glyph
 stripped, one line of detail) so it reads like any other app's notification.
 Tapping the notification opens that session's chat in the web app.
 
-A status has to hold for SETTLE_S before it counts, so a permission prompt answered at
-the desk or a flicker between tools doesn't ping the phone. A session whose kitty window
-is focused on the desktop is assumed to be watched: a finished turn isn't sent at all,
-a dialog only once it has waited FOCUSED_WAIT_S unanswered. Headless runs (cron jobs)
+A status has to hold for SETTLE_S before it counts, so a permission prompt answered
+right away at the desk doesn't ping the phone. Nothing else delays it: the user wants the
+phone to know about as quickly as the sphere's water does. (Holding back sessions focused
+on the desktop was tried and dropped: it made the session in use the slowest to notify.) Headless runs (cron jobs)
 are never sent; there's nobody to answer them.
 """
-import json
 import os
 import re
-import subprocess
 import threading
 import time
 
-from claude_sessions import _has_ancestor, collect_sessions
+from claude_sessions import collect_sessions
 import session_chat
 import webpush
 
-POLL_S = 3
-SETTLE_S = 6
-FOCUSED_WAIT_S = 90
+POLL_S = 1          # a registry scan is ~0.1 ms
+SETTLE_S = 3
 DETAIL_MAX = 180    # the lock screen shows about three lines
 
 
@@ -41,19 +38,6 @@ def _sid(s):
 def _clip(text, n):
     text = (text or "").strip()
     return text if len(text) <= n else text[:n - 1].rstrip() + "…"
-
-
-def focused_pid():
-    """pid of the desktop's focused window (Hyprland), or None."""
-    try:
-        r = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True, text=True, timeout=3)
-        return json.loads(r.stdout or "{}").get("pid")
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-
-
-def is_focused(s, fpid):
-    return bool(fpid) and any(p == fpid or _has_ancestor(p, {fpid}) for p in s["pids"])
 
 
 def plain(text):
@@ -112,7 +96,6 @@ class Notifier(threading.Thread):
     def tick(self, seed=False, now=None):
         now = now or time.time()
         live = {}
-        fpid = None
         for s in collect_sessions():
             if s["headless"]:
                 continue
@@ -125,14 +108,9 @@ class Notifier(threading.Thread):
             if st["done"] or now - st["since"] < SETTLE_S:
                 continue
             if s["status"] == "waiting":
-                fpid = fpid or focused_pid()
-                if is_focused(s, fpid) and now - st["since"] < FOCUSED_WAIT_S:
-                    continue
                 self.send(s, *waiting_notice(s))
             elif s["status"] == "idle" and st["prev"] in ("busy", "waiting"):
-                fpid = fpid or focused_pid()
-                if not is_focused(s, fpid):
-                    self.send(s, "Completed", plain(last_reply(s)))
+                self.send(s, "Completed", plain(last_reply(s)))
             st["done"] = True
         self.seen = live
 
@@ -140,5 +118,6 @@ class Notifier(threading.Thread):
         name = s["name"] or os.path.basename(s["cwd"] or "") or "Claude Code"
         sid = _sid(s)
         # tag: a newer notice about the same session replaces the old one on the phone.
+        print(f"notify: {name}: {status}", flush=True)
         webpush.send_all({"title": name, "body": f"{status}\n{detail}" if detail else status,
                           "tag": sid, "id": sid})
