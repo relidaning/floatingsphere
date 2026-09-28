@@ -12,7 +12,8 @@ Claude subscription you're using, and what your Claude Code sessions are doing.
       ╭─┴─╮
      │  2  │ ← running Claude Code sessions
      │~~~~~│ ← water: height = current 5-hour window used %
-      ╰───╯     green = all sessions idle, purple = any busy / waiting
+      ╰───╯     red = a session is waiting for your answer,
+                purple = any busy, green = all idle
                 white rim ticks = time elapsed in the 5-hour window
 ```
 
@@ -30,6 +31,17 @@ using quota faster than time is passing and will hit the limit before the reset.
 
 The sphere never keeps keyboard focus: clicking it hands focus straight back to the
 window you were using.
+
+## Phone notifications
+
+The web view can push a notification to your phone when a session needs your approval or
+an answer (with the command or question) or completes a turn (with the start of its reply). Tapping one
+opens that session's chat. Sessions whose terminal you're focused on are left alone.
+
+Push needs HTTPS, so `sphere-web` also listens on `https://<pc>:8766`, using
+`~/.config/floatingsphere/tls-cert.pem` / `tls-key.pem` (a cert your phone trusts, e.g.
+from a mkcert CA installed on it). On an iPhone, open that address in Safari, add it to
+the home screen, open it from there and tap the 🔔 next to Sessions.
 
 ## Data sources
 

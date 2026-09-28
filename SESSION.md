@@ -1,5 +1,28 @@
 # Sessions
 
+## 2026-09-28 — Plainer notification wording
+The user found the notifications childish (emoji, checkbox symbols, numbered options) and asked for something more grown-up. Now:
+- **Title:** the session name.
+- **Body:** a status line, "Awaiting approval" (permission prompt), "Awaiting your answer" (AskUserQuestion) or "Completed", then one line of detail. That's the tool call ("Bash command: git push origin master — Push the branch to GitHub."), the question, or the start of the reply.
+- **Cleanup:** markdown and terminal glyphs are stripped by `notify.plain()`.
+- **Enable message:** "Notifications enabled".
+
+Tested with sample dialog screens and the notification rules. Not yet seen on the phone.
+
+## 2026-09-28 — Tapping a notification opens that session
+The user asked whether tapping a notification takes them to the session. It already did (`sw.js` `notificationclick`), but it had never been tested. The handler's logic moved into `openSession(id)` in `sw.js` so Playwright could call it inside the service worker. Checked in headless Chrome: with the app open on the list, it opens the session's chat; from inside another chat, it switches; with the app closed, opening `/#<id>` (what the tap opens) goes straight into the chat. A tap from inside another chat now replaces that chat in history, so back goes to the list rather than the previous chat. A real tap on the iPhone isn't tested.
+
+## 2026-09-28 — Red water while a session waits for an answer
+The sphere's water is now red whenever any session is `waiting` (a permission prompt or question to answer); otherwise it's purple while any is busy and green when all are idle. This applies to both `floatingsphere.py` and the web canvas. The red is a deeper crimson (0.93, 0.16, 0.24) than `RING_HOT`, because with the 7d ring at 94% the first try in the ring's coral red blended into it. Checked in headless Chrome with a faked waiting session; the desktop sphere was restarted via `hyprctl dispatch exec`.
+
+## 2026-09-28 — Push notifications for idle / waiting sessions
+The phone now gets a notification when a session finishes a turn (✅, with its last reply) or waits on a dialog (⏳, with the options). Tapping one opens that session's chat in the web app. A first version sent them through the existing Telegram bot, but the user wanted everything in their own web app, so it was replaced with Web Push:
+- **Server:** `notify.py` watches session status (6s settle; sessions focused on the desktop are skipped). `webpush.py` does the encryption and VAPID signing with stdlib + `cryptography`.
+- **Page:** `web/sw.js` shows the pushes, and a 🔔 in the Sessions header subscribes.
+- **HTTPS:** sphere_web now also serves HTTPS on 8766 with a copy of besmart's mkcert cert, which the iPhone already trusts.
+
+Tested: encryption decrypted by `http_ece`; the VAPID JWT is accepted by Apple (a dummy token got `BadWebPushToken`, not a JWT error); a real round trip in headless Chrome (🔔 → FCM subscription → server push 201 → notification shown with the right title, body, tag and id). The notification rules were tested with fake sessions. Not yet tested on the iPhone: the user has to add `https://192.168.255.6:8766` to the home screen and tap 🔔.
+
 ## 2026-09-28 — Chat with a session from the phone
 Tapping a session in the web view now opens a chat panel:
 - **Conversation:** the transcript, incremental by byte offset.

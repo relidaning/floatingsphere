@@ -119,6 +119,20 @@
     color: #f75c5c; font-weight: bold; font-size: 12px;
   }
   .stop:disabled { opacity: .4; }
+  /* 🔔: push notifications on/off (notify.py) */
+  .head .end { display: flex; align-items: center; gap: 8px; }
+  .bell {
+    width: 30px; height: 30px; margin: -8px -6px -8px 0;
+    display: grid; place-items: center;
+    border: 1px solid transparent; border-radius: 10px;
+    background: transparent; color: var(--ink-4); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bell svg { width: 17px; height: 17px; }
+  .bell.on { color: var(--amber); }
+  .bell.on svg path.slash { display: none; }
+  .bell:disabled { opacity: .4; }
+  @media (hover: hover) { .bell:hover { border-color: rgba(250,191,64,0.4); } }
   .toast { position: fixed; z-index: 20; left: 50%; bottom: calc(max(18px, env(safe-area-inset-bottom)) + 70px); transform: translateX(-50%);
     background: #2a1a1f; border: 1px solid rgba(247,92,92,0.5); color: #f75c5c; font-size: 12px;
     padding: 8px 14px; border-radius: 10px; opacity: 0; transition: opacity .2s; pointer-events: none; }
@@ -370,7 +384,7 @@
     </section>
   </div>
   <section class="card">
-    <div class="head"><h2>Sessions</h2><span class="muted" id="count"></span></div>
+    <div class="head"><h2>Sessions</h2><span class="end"><span class="muted" id="count"></span><button class="bell" id="bell" aria-label="Notifications" title="Notify me when a session finishes or asks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/><path class="slash" d="M4 4l16 16"/></svg></button></span></div>
     <div id="segbar" class="segbar empty"></div>
     <div class="dots" id="dots"></div>
     <div class="list" id="list" style="margin-top:14px"></div>
@@ -441,7 +455,7 @@
 <script>
 const POLL_MS = 3000;
 const FIVE_H = 5 * 3600, WEEK = 7 * 24 * 3600, STALE_S = 40 * 60;
-const GREEN = [0.20, 0.83, 0.60], PURPLE = [0.66, 0.33, 0.97];
+const GREEN = [0.20, 0.83, 0.60], PURPLE = [0.66, 0.33, 0.97], RED = [0.93, 0.16, 0.24];
 const RING_OK = "250,191,64", RING_HOT = "247,92,92";
 const STATUS = {
   busy: ["busy", "s-busy"], bg: ["background", "s-bg"], agent: ["subagent", "s-bg"],
@@ -697,8 +711,9 @@ function sphereTargets() {
   const u = (state && state.usage) || {};
   let five = u.five_pct;
   if (u.five_reset && u.five_reset < now()) five = 0;
-  const working = state ? state.sessions.some(s => s.status !== "idle") : false;
-  return [Math.max(0, Math.min(1, (five || 0) / 100)), working ? PURPLE : GREEN];
+  const ss = state ? state.sessions : [];
+  const color = ss.some(s => s.status === "waiting") ? RED : ss.some(s => s.status !== "idle") ? PURPLE : GREEN;
+  return [Math.max(0, Math.min(1, (five || 0) / 100)), color];
 }
 
 function drawSphere() {
@@ -1193,6 +1208,71 @@ document.addEventListener("keydown", e => {
   if (document.body.classList.contains("asking")) closeDialog(true);
   else if (chat.id && !document.body.classList.contains("adding")) leaveChat();
 });
+// ---- 🔔 : push notifications (sw.js shows them, notify.py on the PC sends them) ----
+// Push needs a secure context (the HTTPS port) and, on iOS, the app added to the home
+// screen from that address; iOS only has PushManager in the installed app.
+const bell = $("bell");
+const canPush = window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window;
+const setBell = on => {
+  bell.classList.toggle("on", on);
+  bell.title = on ? "Notifications on (tap to turn off)" : "Notify me when a session finishes or asks";
+};
+const b64bytes = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+async function pushApi(path, sub) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"},
+                               body: JSON.stringify({sub: sub.toJSON()})});
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+if (canPush) {
+  navigator.serviceWorker.register("sw.js").then(async reg => {
+    const sub = await reg.pushManager.getSubscription();
+    setBell(!!sub);
+    if (sub) pushApi("api/push/on", sub).catch(() => {});  // re-register it in case the PC forgot it
+  }).catch(() => {});
+  // A notification tapped while the app is open: jump to that session's chat.
+  navigator.serviceWorker.addEventListener("message", e => {
+    const id = e.data && e.data.open;
+    if (!id || chat.id === id) return;
+    // From inside another chat, take its place, so back still leads to the list.
+    if (chat.id) { history.replaceState({chat: id}, "", "#" + encodeURIComponent(id)); openChat(id, false); }
+    else openChat(id);
+  });
+}
+bell.addEventListener("click", async () => {
+  if (!canPush) {
+    if (!window.isSecureContext) {
+      const info = await fetch("api/push").then(r => r.json()).catch(() => ({}));
+      if (!info.https_port) return toast("notifications need HTTPS, which isn't set up on the PC");
+      toast("notifications need the https address: add that page to your home screen", true);
+      setTimeout(() => { location.href = `https://${location.hostname}:${info.https_port}/`; }, 1800);
+    } else {
+      toast("add this page to your home screen, open it from there, then tap 🔔");
+    }
+    return;
+  }
+  bell.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const old = await reg.pushManager.getSubscription();
+    if (old) {
+      await pushApi("api/push/off", old).catch(() => {});
+      await old.unsubscribe();
+      setBell(false);
+      toast("notifications off", true);
+      return;
+    }
+    if (await Notification.requestPermission() !== "granted") throw new Error("permission denied");
+    const {key} = await fetch("api/push").then(r => r.json());
+    const sub = await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: b64bytes(key)});
+    await pushApi("api/push/on", sub);
+    setBell(true);
+  } catch (err) {
+    toast(`notifications: ${err.message}`);
+  } finally {
+    bell.disabled = false;
+  }
+});
+
 // Opened with #<session id> (a reload inside a chat): go straight back into it.
 if (location.hash.length > 1) {
   const id = decodeURIComponent(location.hash.slice(1));

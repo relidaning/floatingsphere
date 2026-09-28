@@ -5,7 +5,8 @@
   * outer ring            - 7-day usage (colored arc = used %, white tick = time elapsed in the week)
   * water inside          - current 5-hour window usage (height = used %)
   * rim ticks on the water- time elapsed in the 5-hour window (water above them = ahead of pace)
-  * water color           - green when every instance is idle, purple while any is busy/waiting
+  * water color           - red while any instance waits for you (a dialog to answer),
+                            else purple while any is busy, green when all are idle
 
 Usage comes from claude-maxer's snapshot (~/.claude/state/usage_snapshot.json),
 refreshed every 15 min by its fetch cron; the file is re-read whenever it changes.
@@ -53,6 +54,7 @@ FIVE_H_S = 5 * 3600
 
 GREEN = (0.20, 0.83, 0.60)
 PURPLE = (0.66, 0.33, 0.97)
+RED = (0.93, 0.16, 0.24)  # deeper than RING_HOT so the water and a hot 7d ring stay apart
 RING_OK = (0.98, 0.75, 0.25)
 RING_HOT = (0.97, 0.36, 0.36)
 
@@ -83,6 +85,7 @@ class State:
         self.sessions = []
         self.instances = 0
         self.working = 0
+        self.waiting = 0
 
     def poll(self):
         try:
@@ -96,6 +99,7 @@ class State:
         self.sessions = collect_sessions()
         self.instances = len(self.sessions)
         self.working = sum(1 for x in self.sessions if x["status"] != "idle")
+        self.waiting = sum(1 for x in self.sessions if x["status"] == "waiting")
 
 
 # ---------- drawing ----------
@@ -117,7 +121,7 @@ class Sphere(Gtk.DrawingArea):
         if u.get("five_reset") and u["five_reset"] < time.time():
             five = 0  # the window has reset since the snapshot
         level = max(0.0, min(1.0, (five or 0) / 100))
-        color = PURPLE if self.state.working else GREEN
+        color = RED if self.state.waiting else PURPLE if self.state.working else GREEN
         return level, color
 
     def step(self):

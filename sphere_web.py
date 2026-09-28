@@ -12,14 +12,22 @@ Tapping a session opens its chat (session_chat): `GET /api/chat` streams the tra
 by byte offset plus the dialog the session is stopped on, `POST /api/send` types a
 prompt into its kitty window and `POST /api/keys` answers a dialog.
 
-Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT override 0.0.0.0:8765)
+It also runs notify.Notifier, which pushes a notification to the phone (webpush) when a
+session stops on a dialog or finishes a turn. Push needs a secure context, so the same
+app is served over HTTPS on SPHERE_WEB_TLS_PORT too, with a cert the phone trusts
+(TLS_CERT / TLS_KEY, a copy of besmart's mkcert cert); the 🔔 in the page subscribes.
+
+Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT / SPHERE_WEB_TLS_PORT
+     override 0.0.0.0, 8765 and 8766)
 """
 import gzip
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
@@ -27,15 +35,21 @@ from urllib.parse import parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from claude_sessions import collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
 import session_chat  # noqa: E402
+import notify  # noqa: E402
+import webpush  # noqa: E402
 
 HOST = os.environ.get("SPHERE_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SPHERE_WEB_PORT", "8765"))
+TLS_PORT = int(os.environ.get("SPHERE_WEB_TLS_PORT", "8766"))
+TLS_CERT = os.path.join(webpush.STATE_DIR, "tls-cert.pem")
+TLS_KEY = os.path.join(webpush.STATE_DIR, "tls-key.pem")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 # Only these are served; nothing else under web/ (or outside it) is reachable.
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/manifest.json": ("manifest.json", "application/manifest+json"),
+    "/sw.js": ("sw.js", "text/javascript; charset=utf-8"),
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
     "/icon-192.png": ("icon-192.png", "image/png"),
     "/icon-512.png": ("icon-512.png", "image/png"),
@@ -240,6 +254,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 offset = None
             self._send(200, "application/json", json.dumps(chat_json(s, offset)).encode())
+        elif path == "/api/push":
+            tls = TLS_PORT if os.path.exists(TLS_CERT) else None
+            self._send(200, "application/json", json.dumps({"key": webpush.public_key(), "https_port": tls}).encode())
         elif path == "/api/projects":
             self._send(200, "application/json", json.dumps({"projects": list_projects()}).encode())
         elif path in STATIC:
@@ -249,7 +266,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = f.read()
             except OSError:
                 return self._send(404, "text/plain", b"not found")
-            if name == "index.html":
+            if name == "sw.js":
+                self._send(200, ctype, body)  # the browser checks it for updates; don't pin it
+            elif name == "index.html":
                 # Inline the current state so the first paint doesn't wait on /api/state.
                 body = body.replace(INITIAL_MARK, state_json().replace(b"</", b"<\\/"), 1)
                 self._send(200, ctype, body)
@@ -270,7 +289,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, "text/plain", b"bad request")
         raw = self.rfile.read(length)
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys"):
+        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys", "/api/push/on", "/api/push/off"):
             return self._send(404, "text/plain", b"not found")
         # Requiring a JSON body makes a cross-site request need a CORS preflight,
         # which this server never answers, so another web page open on the phone
@@ -286,6 +305,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, "text/plain", b"bad request")
         if path == "/api/new":
             return self._new(body)
+        if path.startswith("/api/push/"):
+            return self._push(path, body)
         # Resolve pids here from the live registry; the client only names a session.
         match = find_session(target)
         if not match:
@@ -330,6 +351,21 @@ class Handler(BaseHTTPRequestHandler):
         _cache["at"] = 0.0
         self._send(200, "application/json", b'{"ok": true}')
 
+    def _push(self, path, body):
+        """🔔: keep (on) or drop (off) this browser's push subscription."""
+        sub = webpush.valid(body.get("sub"))
+        if not sub:
+            return self._fail(400, "not a push subscription")
+        if path == "/api/push/off":
+            webpush.remove(sub["endpoint"])
+        else:
+            webpush.add(sub)
+            threading.Thread(target=webpush.send, daemon=True, args=(sub, {
+                "title": "Notifications enabled",
+                "body": "You'll be notified when a session completes or needs your input.",
+                "tag": "sphere-on"})).start()
+        self._send(200, "application/json", b'{"ok": true}')
+
     def _fail(self, code, error):
         self._send(code, "application/json", json.dumps({"ok": False, "error": error}).encode())
 
@@ -356,6 +392,18 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"sphere_web on http://{HOST}:{PORT}", flush=True)
+    if os.path.exists(TLS_CERT):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+        tls = ThreadingHTTPServer((HOST, TLS_PORT), Handler)
+        # The handshake then runs in the request's thread, not in accept(), so one slow
+        # phone on the tunnel can't hold up everyone else.
+        tls.socket = ctx.wrap_socket(tls.socket, server_side=True, do_handshake_on_connect=False)
+        threading.Thread(target=tls.serve_forever, daemon=True).start()
+        print(f"sphere_web on https://{HOST}:{TLS_PORT}", flush=True)
+    else:
+        print(f"no {TLS_CERT}: HTTPS (and so push notifications) off", flush=True)
+    notify.Notifier().start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
