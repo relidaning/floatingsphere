@@ -1,5 +1,11 @@
 # Sessions
 
+## 2026-09-28 — List showing under the phone chat; stop closes the kitty
+On iOS the list page scrolled under the open chat and showed in the gap when the keyboard lifted the page. The fix has three parts: `lockPage()` pins the body at its scroll offset, a `touchmove` that doesn't start in something scrollable is cancelled, and the panel's `::before` backdrop extends 100vh past both edges. It hasn't been tested on the phone yet. `stop_session()` now also closes the kitty that `claude_new.sh` or the web + opened. It recognises the `zsh -ic '…$CLAUDE_NEW_LABEL…; exec zsh -i'` parent, and once claude has exited it SIGKILLs the `zsh -i` that parent exec'd into (checking the start time against pid reuse). SIGHUP was tried first, but `~/.zshrc`'s `TRAPHUP` keeps the shell alive. This was tested with a throwaway kitty. Terminals the user opened themselves are left open.
+
+## 2026-09-28 — Phone notifications via Web Push, released as v0.0.5 and v0.0.6
+Added phone notifications for idle/waiting sessions, first through Telegram, which the user rejected in favor of Web Push to their own home-screen PWA (HTTPS on 8766, VAPID + RFC 8291 in `webpush.py`), plus red water while a session is waiting and plain, emoji-free wording. Follow-ups fixed iOS tap-to-session (Cache Storage handoff), a duplicate "Notifications enabled" push, slow notifications (the focused-window hold was dropped), landing at the user's last message, self-updating pages, Nagle delays over TLS and chat jumping while typing; tagged `v0.0.5` (`39a97d0`) and `v0.0.6` (`c9a61e3`).
+
 ## 2026-09-28 — Jumping chat while typing; the slow notification tap traced
 The user saw the conversation jump while typing on the iPhone, and a notification tap took ~10 s again. The jumping was fixed in two places:
 - **`fitInput()`:** it restores the list's scroll position after the "auto" measuring collapse, or sticks to the bottom if it was there.

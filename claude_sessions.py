@@ -27,6 +27,7 @@ import os
 import re
 import signal
 import subprocess
+import threading
 import time
 from datetime import datetime
 
@@ -328,13 +329,66 @@ def window_for_pid(pid, clients=None, max_depth=24):
     return None
 
 
+def _starttime(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            data = f.read()
+        return int(data[data.rindex(")") + 2:].split()[19])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _launcher_shell(pid):
+    """The `zsh -ic 'command claude …; exec zsh -i'` that claude_new.sh or the web
+    app's + opened kitty with, if `pid` is its claude; None for any other terminal."""
+    ppid = _ppid(pid)
+    try:
+        with open(f"/proc/{ppid}/cmdline", "rb") as f:
+            args = f.read().decode(errors="replace").split("\0")
+    except (OSError, TypeError):
+        return None
+    if args[:2] == ["zsh", "-ic"] and len(args) > 2 and "$CLAUDE_NEW_LABEL" in args[2] \
+            and args[2].rstrip().endswith("exec zsh -i"):
+        return ppid, _starttime(ppid)
+    return None
+
+
+def _close_launcher_shells(pids, shells, wait_s=8.0):
+    """Once claude has exited, end the shell its kitty fell back to, so the
+    window (and kitty, when it was its only window) closes too."""
+    deadline = time.monotonic() + wait_s
+    while any(_pid_alive(p) for p in pids) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    time.sleep(0.3)  # let the `exec zsh -i` happen
+    for shell, started in shells:
+        try:
+            with open(f"/proc/{shell}/cmdline", "rb") as f:
+                fresh = f.read().split(b"\0")[:2] == [b"zsh", b"-i"]
+        except OSError:
+            continue
+        # Only the empty shell the launcher exec'd into, and not a reused pid. KILL, not
+        # HUP: .zshrc's TRAPHUP runs the terminal-close fallback and doesn't exit.
+        if fresh and _starttime(shell) == started:
+            try:
+                os.kill(shell, signal.SIGKILL)
+            except OSError:
+                pass
+
+
 def stop_session(pids):
-    """SIGTERM every process of a session (Claude Code exits cleanly on it)."""
+    """SIGTERM every process of a session (Claude Code exits cleanly on it), then
+    close the kitty window it was started in, if one of our launchers opened it.
+    A terminal the user started claude in themselves is left open."""
+    shells = {sh for sh in map(_launcher_shell, pids) if sh and sh[1] is not None}
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
             pass
+    if shells:
+        # not a daemon: a caller that exits right away (the popup) still finishes this
+        threading.Thread(target=_close_launcher_shells, args=(list(pids), shells),
+                         daemon=False).start()
 
 
 def focus_session(pids):

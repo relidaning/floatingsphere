@@ -245,8 +245,13 @@
     transition: transform .28s cubic-bezier(.2,.8,.2,1), visibility 0s .28s;
     box-shadow: -12px 0 32px rgba(0,0,0,0.5);
   }
+  /* the panel's backdrop runs a screen past both edges: while iOS lifts the page for the
+     keyboard, fitChat() catches up a frame late, and the list must not show in the gap */
+  .chat::before { content: ""; position: absolute; left: 0; right: 0; top: -100vh; bottom: -100vh;
+    background: var(--bg); z-index: -1; pointer-events: none; }
   body.chatting .chat { transform: none; visibility: visible; transition: transform .28s cubic-bezier(.2,.8,.2,1); }
-  body.chatting { overflow: hidden; }
+  /* iOS scrolls the page under a fixed panel despite overflow:hidden, so pin it (lockPage) */
+  body.chatting { overflow: hidden; position: fixed; left: 0; right: 0; }
   .chat.dragging { transition: none !important; }
   @media (prefers-reduced-motion: reduce) { .chat, body.chatting .chat { transition: none; } }
   .c-head {
@@ -1026,15 +1031,23 @@ function openChat(id, push = true) {
   cList.innerHTML = `<div class="m-more">loading…</div>`;
   $("c-in").value = ""; fitInput();
   renderChatHead();
-  document.body.classList.add("chatting");
+  lockPage(true);
   if (push) history.pushState({chat: id}, "", "#" + encodeURIComponent(id));
   chatPoll();
+}
+// Pin the list page while the chat is over it, at its current scroll, and put it back after.
+let pageY = 0;
+function lockPage(on) {
+  const b = document.body;
+  if (on === b.classList.contains("chatting")) return;
+  if (on) { pageY = scrollY; b.style.top = -pageY + "px"; b.classList.add("chatting"); }
+  else { b.classList.remove("chatting"); b.style.top = ""; scrollTo(0, pageY); }
 }
 function closeChat() {
   clearTimeout(chat.timer);
   chat.id = null;
   closeDialog();
-  document.body.classList.remove("chatting");
+  lockPage(false);
   $("chat").style.transform = "";
   document.activeElement?.blur();
   maybeReload();
@@ -1236,6 +1249,18 @@ $("scr-keys").addEventListener("click", e => {
   el.addEventListener("touchend", end);
   el.addEventListener("touchcancel", end);
 })();
+
+// A drag that starts outside anything scrollable in the panel (the header, the composer, the
+// blank space under a short conversation) would otherwise scroll the page underneath.
+$("chat").addEventListener("touchmove", e => {
+  if (e.touches.length !== 1) return;
+  for (let n = e.target; n && n !== e.currentTarget; n = n.parentElement) {
+    const cs = getComputedStyle(n);
+    if ((/auto|scroll/.test(cs.overflowY) && n.scrollHeight > n.clientHeight) ||
+        (/auto|scroll/.test(cs.overflowX) && n.scrollWidth > n.clientWidth)) return;
+  }
+  if (e.cancelable) e.preventDefault();
+}, {passive: false});
 
 // iOS leaves fixed elements under the keyboard: size the panel to the visible viewport.
 function fitChat(e) {
