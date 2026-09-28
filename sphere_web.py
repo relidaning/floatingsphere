@@ -37,6 +37,7 @@ from claude_sessions import collect_sessions, shorten_path, stop_session, trunca
 import session_chat  # noqa: E402
 import notify  # noqa: E402
 import webpush  # noqa: E402
+from quota import daily_quota  # noqa: E402
 
 HOST = os.environ.get("SPHERE_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SPHERE_WEB_PORT", "8765"))
@@ -137,7 +138,8 @@ def web_version():
 def build_state():
     sessions = [session_json(s) for s in collect_sessions()]
     # `now` lets the page compute time left against the PC's clock, not the phone's.
-    return {"now": time.time(), "usage": read_usage(), "sessions": sessions, "v": web_version()}
+    usage, now = read_usage(), time.time()
+    return {"now": now, "usage": usage, "quota": daily_quota(usage, now), "sessions": sessions, "v": web_version()}
 
 
 _cache = {"at": 0.0, "body": b""}
@@ -254,6 +256,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path, _, query = self.path.partition("?")
         if path == "/api/state":
+            # The open app says which push subscription it is, so that device isn't notified meanwhile.
+            webpush.set_active(self.headers.get("X-Push-Endpoint"))
             self._send(200, "application/json", state_json())
         elif path in ("/api/chat", "/api/screen"):
             q = parse_qs(query)
@@ -304,7 +308,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, "text/plain", b"bad request")
         raw = self.rfile.read(length)
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys", "/api/push/on", "/api/push/off"):
+        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys", "/api/push/on", "/api/push/off",
+                        "/api/push/away"):
             return self._send(404, "text/plain", b"not found")
         # Requiring a JSON body makes a cross-site request need a CORS preflight,
         # which this server never answers, so another web page open on the phone
@@ -367,11 +372,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, "application/json", b'{"ok": true}')
 
     def _push(self, path, body):
-        """🔔: keep (on) or drop (off) this browser's push subscription."""
+        """🔔: keep (on) or drop (off) this browser's push subscription; away: the app left the foreground."""
         sub = webpush.valid(body.get("sub"))
         if not sub:
             return self._fail(400, "not a push subscription")
-        if path == "/api/push/off":
+        if path == "/api/push/away":
+            webpush.set_active(sub["endpoint"], False)
+        elif path == "/api/push/off":
             webpush.remove(sub["endpoint"])
         # The page re-sends its subscription every time it opens (in case this side lost
         # it), so only a device that's new here gets the confirmation.

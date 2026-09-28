@@ -35,9 +35,13 @@ SUBJECT = "https://github.com/relidaning/floatingsphere"
 PUSH_HOSTS = ("push.apple.com", "fcm.googleapis.com", "push.services.mozilla.com", "notify.windows.com")
 SUBS_MAX = 10
 TTL_S = 3600  # an undelivered push older than this is stale news; let the service drop it
+# A device whose app has polled within this long is looking at the sessions already, so
+# it isn't pushed to. The open app polls every 3s; going to the background clears it at once.
+ACTIVE_S = 8
 
 _lock = threading.Lock()
 _key = None
+_active = {}  # endpoint -> when that device's app last polled
 
 
 def b64u(b):
@@ -160,6 +164,18 @@ def remove(endpoint):
             _save_subs(kept)
 
 
+def set_active(endpoint, on=True):
+    """The app on this device is open (it polled) or just went to the background."""
+    if not isinstance(endpoint, str) or not endpoint:
+        return
+    if on:
+        if len(_active) > 4 * SUBS_MAX:  # a header anyone can send: don't let it grow
+            _active.clear()
+        _active[endpoint] = time.time()
+    else:
+        _active.pop(endpoint, None)
+
+
 def send(sub, data):
     """Push `data` (a dict for sw.js) to one subscription; returns the HTTP status."""
     body = encrypt(json.dumps(data).encode(), sub["keys"]["p256dh"], sub["keys"]["auth"])
@@ -181,6 +197,9 @@ def send_all(data):
     if not subs:
         print("push: no subscribed devices", flush=True)
     for sub in subs:
+        if time.time() - _active.get(sub["endpoint"], 0) < ACTIVE_S:
+            print(f"push: {urllib.parse.urlsplit(sub['endpoint']).hostname}: app open, skipped", flush=True)
+            continue
         code = send(sub, data)
         if code in (404, 410):  # unsubscribed / app removed from the home screen
             remove(sub["endpoint"])

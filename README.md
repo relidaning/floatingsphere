@@ -8,7 +8,8 @@ Claude subscription you're using, and what your Claude Code sessions are doing.
 ![The sphere on the desktop, bottom right](docs/desktop.png)
 
 ```
-        ╭── 7-day ring: amber arc = used %, white tick = time elapsed in the week
+        ╭── 7-day ring: amber arc = used %, white tick = time elapsed in the week,
+        │   faint arc = today's quota still left, red = spent past today's quota
       ╭─┴─╮
      │  2  │ ← running Claude Code sessions
      │~~~~~│ ← water: height = current 5-hour window used %
@@ -18,13 +19,18 @@ Claude subscription you're using, and what your Claude Code sessions are doing.
 ```
 
 If the water is above the rim ticks (or the amber arc passes the white ring tick), you are
-using quota faster than time is passing and will hit the limit before the reset.
+using quota faster than time is passing.
+
+**Today's quota** is claude-maxer's daily budget: what's left of the week (up to its
+`weekly_target`, 95%) split evenly over the days until the weekly reset. Today may raise
+the 7-day % by one share. It comes from `~/.claude/state/claude-maxer-day.json`, or is
+computed the same way (`quota.py`) when maxer hasn't written today's.
 
 ## Interaction
 
 | Action              | Does                                                                        |
 | ------------------- | --------------------------------------------------------------------------- |
-| Hover               | Chart card: 5h / 7d meters with pace marker and projection, sessions by status |
+| Hover               | Chart card: 5h / 7d meters with a time-elapsed tick (a minibar after the 5h line = today's quota), sessions by status |
 | Left-click          | Session list; click a card to jump to its terminal, `+` starts a new session |
 | Double right-click  | Quit                                                                        |
 | `SUPER` + drag      | Move (it's a normal Hyprland floating window)                               |
@@ -104,11 +110,11 @@ windowrulev2 = pin, class:^(dev.floatingsphere.popup)$
 The same monitor on a phone, as a home-screen web app (the screenshot is an iPhone):
 
 - **Sphere:** the same drawing as the desktop sphere. Amber ring = 7-day usage with
-  the week-elapsed tick, water = 5-hour usage with rim ticks for the time elapsed in
+  the week-elapsed tick and today's quota as a faint arc, water = 5-hour usage with rim ticks for the time elapsed in
   the window, and the number in the middle = running sessions.
 - **Claude usage:** the hover card's meters. For the 5-hour window and the week you
-  see used %, a white pace tick, a faint bar for the projected % at reset, the reset
-  time, the time left and "pace → N%". The snapshot's age is at the top right.
+  see used %, a white tick for the time elapsed, the reset time and the time left.
+  The snapshot's age is at the top right.
 - **Sessions:** a bar split by status, then a card per session with its name, status
   and time in that status, current task, running tool, model and folder, plus ■ to
   stop it. The floating **+** at the bottom right starts a new session (see below).

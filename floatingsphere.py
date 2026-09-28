@@ -2,7 +2,8 @@
 """Floating sphere: a small always-on-top Claude usage monitor.
 
   * number in the middle  - running Claude Code instances
-  * outer ring            - 7-day usage (colored arc = used %, white tick = time elapsed in the week)
+  * outer ring            - 7-day usage (colored arc = used %, white tick = time elapsed in the week);
+                            faint arc = what's left of today's quota, red past it (quota.py)
   * water inside          - current 5-hour window usage (height = used %)
   * rim ticks on the water- time elapsed in the 5-hour window (water above them = ahead of pace)
   * water color           - red while any instance waits for you (a dialog to answer),
@@ -36,6 +37,7 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from claude_sessions import collect_sessions  # noqa: E402
 from hovercard import HoverCard  # noqa: E402
+from quota import daily_quota  # noqa: E402
 
 APP_ID = "dev.floatingsphere"
 SNAPSHOT_PATH = os.path.expanduser("~/.claude/state/usage_snapshot.json")
@@ -81,6 +83,7 @@ def read_snapshot():
 class State:
     def __init__(self):
         self.usage = None
+        self.quota = None
         self.snap_mtime = None
         self.sessions = []
         self.instances = 0
@@ -95,6 +98,7 @@ class State:
         if mtime != self.snap_mtime:
             self.snap_mtime = mtime
             self.usage = read_snapshot()
+        self.quota = daily_quota(self.usage, time.time())
 
         self.sessions = collect_sessions()
         self.instances = len(self.sessions)
@@ -146,13 +150,25 @@ class Sphere(Gtk.DrawingArea):
         cr.arc(cx, cy, R, 0, 2 * math.pi)
         cr.stroke()
         seven = u.get("seven_pct")
+        q = self.state.quota
+
+        def arc(p0, p1):
+            p0, p1 = (max(0.0, min(1.0, p / 100)) for p in (p0, p1))
+            cr.arc(cx, cy, R, -math.pi / 2 + 2 * math.pi * p0, -math.pi / 2 + 2 * math.pi * p1)
+            cr.stroke()
         if seven is not None:
-            frac = max(0.0, min(1.0, seven / 100))
+            # today's quota still to spend: a faint stretch from 7d up to today's ceiling
+            if q and q["ceiling"] > seven:
+                cr.set_source_rgba(*RING_OK, 0.3)
+                arc(seven, q["ceiling"])
             rc = RING_HOT if seven >= 90 else RING_OK
             cr.set_source_rgba(*rc, 0.45 if stale else 1.0)
             cr.set_line_cap(1)  # ROUND
-            cr.arc(cx, cy, R, -math.pi / 2, -math.pi / 2 + 2 * math.pi * frac)
-            cr.stroke()
+            over = q["ceiling"] if q and seven > q["ceiling"] else seven
+            arc(0, over)
+            if over < seven:  # spent past today's quota
+                cr.set_source_rgba(*RING_HOT, 0.45 if stale else 1.0)
+                arc(over, seven)
         if u.get("seven_reset"):
             elapsed = 1 - (u["seven_reset"] - now) / WEEK_S
             if 0 <= elapsed <= 1:

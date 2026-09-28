@@ -1,7 +1,8 @@
 """Hover card for the floating sphere: the numbers behind the sphere, as small charts.
 
-  * 5h / 7d meters  - used % (solid), projected % at reset if the current rate holds
-                      (faint extension), and a white tick for time elapsed in the window
+  * 5h / 7d meters  - used % (solid) and a white tick for time elapsed in the window
+  * quota minibar   - after the 5h line: today's share of the 7d limit (quota.py), how much
+                      of today's budget 7d has used since midnight, tick = time of day
   * sessions bar    - one segment per status, with a labeled legend
 
 Everything animates: bars sweep in from zero when the card opens (rows staggered),
@@ -26,7 +27,7 @@ INK_2 = (0.70, 0.72, 0.78)      # secondary text
 INK_3 = (0.50, 0.52, 0.58)      # muted text
 TRACK = (1, 1, 1, 0.08)
 FILL = (0.98, 0.75, 0.25)       # same amber as the sphere's 7d ring
-CRITICAL = (0.90, 0.40, 0.40)   # projection past 100%
+CRITICAL = (0.90, 0.40, 0.40)   # stale snapshot, today's quota overspent
 
 # session status -> (color, label); validated as a categorical set on the dark card
 # surface (dataviz validate_palette.js: all checks pass), in stacking order
@@ -54,15 +55,23 @@ def _fmt_left(seconds):
 
 
 def window_stats(pct, reset, length, now):
-    """used %, elapsed fraction, projected % at reset (or None), reset-passed flag."""
+    """used %, elapsed fraction, reset-passed flag."""
     if pct is None or not reset:
         return None
     if reset <= now:
-        return {"used": 0.0, "elapsed": None, "proj": None, "reset": reset, "passed": True}
+        return {"used": 0.0, "elapsed": None, "reset": reset, "passed": True}
     elapsed = 1 - (reset - now) / length
-    proj = pct / elapsed if elapsed >= 0.05 and pct > 0 else None
-    return {"used": float(pct), "elapsed": max(0.0, min(1.0, elapsed)),
-            "proj": proj, "reset": reset, "passed": False}
+    return {"used": float(pct), "elapsed": max(0.0, min(1.0, elapsed)), "reset": reset, "passed": False}
+
+
+def quota_stats(q, seven, now):
+    """Today's quota (quota.py): % of today's budget used by 7d, elapsed share of the day."""
+    if q is None or seven is None:
+        return None
+    spent = max(0.0, seven - q["start"])
+    elapsed = (now - q["day_start"]) / (q["day_end"] - q["day_start"])
+    return {"used": 100 * spent / q["budget"] if q["budget"] > 0 else 100.0,
+            "elapsed": max(0.0, min(1.0, elapsed))}
 
 
 class HoverCard(Gtk.DrawingArea):
@@ -123,7 +132,29 @@ class HoverCard(Gtk.DrawingArea):
 
     # ---- rows ----
 
-    def _meter(self, cr, y, key, title, stats, delay, now):
+    def _minibar(self, cr, x, y, stats, delay):
+        """Today's quota, small: fill = % of today's budget used, tick = time of day."""
+        bw, bh = min(80, W - PAD - x), 5  # right-aligned; whatever the line leaves, up to 80
+        if bw < 20:
+            return
+        x = W - PAD - bw
+        fade = min(1.0, self._since(delay) / 0.25)
+        used = self._anim("quota", stats["used"], delay)
+        cr.set_source_rgba(*TRACK)
+        self._rounded(cr, x, y, bw, bh, 2.5)
+        cr.fill()
+        if used > 0:
+            cr.set_source_rgba(*(CRITICAL if used > 100 else FILL), fade)
+            self._rounded(cr, x, y, max(bh, bw * min(used, 100.0) / 100), bh, 2.5)
+            cr.fill()
+        ex = x + bw * stats["elapsed"]
+        cr.set_source_rgba(1, 1, 1, 0.9 * fade)
+        cr.set_line_width(1.5)
+        cr.move_to(ex, y - 2)
+        cr.line_to(ex, y + bh + 2)
+        cr.stroke()
+
+    def _meter(self, cr, y, key, title, stats, delay, now, mini=None):
         x0, bw, bh = PAD, W - 2 * PAD, 8
         fade = min(1.0, self._since(delay) / 0.25)
         if stats is None:
@@ -139,13 +170,6 @@ class HoverCard(Gtk.DrawingArea):
         self._rounded(cr, x0, by, bw, bh, 4)
         cr.fill()
 
-        proj = stats["proj"]
-        if proj is not None:
-            p = self._anim(key + "_proj", min(proj, 100.0), delay + 0.25)
-            if p > used:
-                cr.set_source_rgba(*(CRITICAL if proj > 100 else FILL), 0.28)
-                self._rounded(cr, x0, by, bw * p / 100, bh, 4)
-                cr.fill()
         if used > 0:
             cr.set_source_rgba(*FILL, 1)
             self._rounded(cr, x0, by, max(bh, bw * used / 100), bh, 4)
@@ -165,9 +189,9 @@ class HoverCard(Gtk.DrawingArea):
             reset_s = time.strftime("%a %H:%M" if stats["reset"] - now > 20 * 3600 else "%H:%M",
                                     time.localtime(stats["reset"]))
             sub = f"resets {reset_s} · {_fmt_left(stats['reset'] - now)} left"
-            if proj is not None:
-                sub += f" · pace → {round(proj)}%"
-        self._text(cr, x0, by + bh + 6, sub, 10, INK_3, alpha=fade)
+        tw, th = self._text(cr, x0, by + bh + 6, sub, 10, INK_3, alpha=fade)
+        if mini is not None:
+            self._minibar(cr, x0 + tw + 8, by + bh + 6 + th / 2 - 2.5, mini, delay + 0.25)
 
     def _sessions(self, cr, y, delay):
         x0, bw, bh = PAD, W - 2 * PAD, 8
@@ -229,6 +253,7 @@ class HoverCard(Gtk.DrawingArea):
 
         five = window_stats(u.get("five_pct"), u.get("five_reset"), FIVE_H_S, now)
         seven = window_stats(u.get("seven_pct"), u.get("seven_reset"), WEEK_S, now)
-        self._meter(cr, 30, "five", "5-hour window", five, 0.0, now)
+        quota = quota_stats(self.state.quota, u.get("seven_pct"), now)
+        self._meter(cr, 30, "five", "5-hour window", five, 0.0, now, mini=quota)
         self._meter(cr, 92, "seven", "7-day", seven, STAGGER_S, now)
         self._sessions(cr, 154, 2 * STAGGER_S)
