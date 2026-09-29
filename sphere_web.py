@@ -412,13 +412,25 @@ class Handler(BaseHTTPRequestHandler):
         pass  # polled every few seconds; access logs would only be noise
 
 
+class Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # A phone that doesn't trust the cert, or drops the connection, fails the TLS
+        # handshake inside the request; that's the client's doing, so one line, no traceback.
+        e = sys.exc_info()[1]
+        if isinstance(e, (ssl.SSLError, ConnectionError, TimeoutError)):
+            print(f"sphere_web: {client_address[0]}: {e.__class__.__name__}: {getattr(e, 'reason', None) or e}",
+                  flush=True)
+        else:
+            super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    server = Server((HOST, PORT), Handler)
     print(f"sphere_web on http://{HOST}:{PORT}", flush=True)
     if os.path.exists(TLS_CERT):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(TLS_CERT, TLS_KEY)
-        tls = ThreadingHTTPServer((HOST, TLS_PORT), Handler)
+        tls = Server((HOST, TLS_PORT), Handler)
         # The handshake then runs in the request's thread, not in accept(), so one slow
         # phone on the tunnel can't hold up everyone else.
         tls.socket = ctx.wrap_socket(tls.socket, server_side=True, do_handshake_on_connect=False)
