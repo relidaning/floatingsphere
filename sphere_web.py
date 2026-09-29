@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from claude_sessions import collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
+from claude_sessions import _starttime, collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
 import session_chat  # noqa: E402
 import slash_commands  # noqa: E402
 import notify  # noqa: E402
@@ -77,6 +77,7 @@ PROMPT_MAX = 4000
 CHAT_PROMPT_MAX = 20000
 STEPS_MAX = 24
 RESUME_WAIT_S = 8
+CLEAR_RE = re.compile(r"/(clear|new|reset)\s*$")  # /clear and its aliases
 # The client picks flags by these keys; it never sends argv text.
 CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 FLAGS = {"skip_permissions": "--dangerously-skip-permissions", "rc": "--remote-control"}
@@ -101,7 +102,7 @@ def read_usage():
 
 def session_json(s):
     return {
-        "id": s["session_id"] or f"pid:{s['pid']}",
+        "id": session_key(s),
         "name": s["name"],
         "cwd": shorten_path(s["cwd"]),
         "status": s["status"],
@@ -115,10 +116,43 @@ def session_json(s):
     }
 
 
+def session_key(s):
+    return s["session_id"] or f"pid:{s['pid']}"
+
+
+# /clear (and /new, /reset) keeps the process but starts a new conversation, so the
+# session's id changes under an open chat. Remember which processes each id ran in
+# (with their start times, so a reused pid never matches) to name its successor.
+_procs = {}  # session id -> {(pid, starttime)}
+PROCS_MAX = 500
+
+
+def live_sessions():
+    sessions = collect_sessions()
+    for s in sessions:
+        key = session_key(s)
+        if key not in _procs:
+            if len(_procs) >= PROCS_MAX:
+                del _procs[next(iter(_procs))]
+            _procs[key] = {(p, _starttime(p)) for p in s["pids"]}
+    return sessions
+
+
+def successor(target):
+    """The id a session now goes by after its conversation changed, or None."""
+    procs = _procs.get(target)
+    if not procs:
+        return None
+    for s in live_sessions():
+        key = session_key(s)
+        if key != target and any((p, _starttime(p)) in procs for p in s["pids"]):
+            return key
+    return None
+
+
 def find_session(target):
     """The live session with this id; the client only ever names one, never pids."""
-    return next((s for s in collect_sessions()
-                 if (s["session_id"] or f"pid:{s['pid']}") == target), None)
+    return next((s for s in live_sessions() if session_key(s) == target), None)
 
 
 def chat_json(s, offset):
@@ -142,7 +176,7 @@ def web_version():
 
 
 def build_state():
-    sessions = [session_json(s) for s in collect_sessions()]
+    sessions = [session_json(s) for s in live_sessions()]
     # `now` lets the page compute time left against the PC's clock, not the phone's.
     usage, now = read_usage(), time.time()
     return {"now": now, "usage": usage, "quota": daily_quota(usage, now), "sessions": sessions, "v": web_version()}
@@ -268,9 +302,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "application/json", state_json())
         elif path in ("/api/chat", "/api/screen", "/api/commands", "/api/resume"):
             q = parse_qs(query)
-            s = find_session((q.get("id") or [""])[0])
+            target = (q.get("id") or [""])[0]
+            s = find_session(target)
             if not s:
-                return self._send(404, "application/json", b'{"ok": false, "error": "no such session"}')
+                # Gone, or cleared: then `moved` names the id to follow.
+                return self._send(404, "application/json", json.dumps(
+                    {"ok": False, "error": "no such session", "moved": successor(target)}).encode())
             if path == "/api/commands":
                 cmds = slash_commands.list_commands(s["cwd"])
                 return self._send(200, "application/json", json.dumps({"commands": cmds}).encode())
@@ -375,6 +412,8 @@ class Handler(BaseHTTPRequestHandler):
             if s["status"] == "waiting":
                 return self._fail(409, "it's waiting on a dialog: answer that first")
             ok = session_chat.send_prompt(s["pids"], text.strip())
+            if ok and CLEAR_RE.match(text.strip()):
+                return self._cleared(s)
         else:
             steps = body.get("steps")
             if (not isinstance(steps, list) or not 0 < len(steps) <= STEPS_MAX
@@ -385,6 +424,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._fail(409, "no kitty window with remote control for this session")
         _cache["at"] = 0.0
         self._send(200, "application/json", b'{"ok": true}')
+
+    def _cleared(self, s):
+        """/clear was typed: wait for the new conversation's id, so the chat can follow it."""
+        old, new = session_key(s), None
+        deadline = time.time() + RESUME_WAIT_S
+        while new is None and time.time() < deadline:
+            time.sleep(0.2)
+            new = successor(old)
+        _cache["at"] = 0.0
+        self._send(200, "application/json", json.dumps({"ok": True, "id": new or old}).encode())
 
     def _resume(self, s, to):
         """The /resume sheet's pick: switch the session's terminal to a past conversation.

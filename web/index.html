@@ -313,6 +313,11 @@
     background: rgba(255,255,255,0.05); border-radius: 10px; padding: 3px 10px; overflow-wrap: anywhere; white-space: pre-wrap; }
   .m-cmd { color: var(--amber); }
   .m-more { align-self: center; width: auto !important; font-size: 11px; color: var(--ink-4); font-style: italic; }
+  .m-switch { margin: auto !important; width: auto !important; display: flex; flex-direction: column; align-items: center; gap: 12px;
+    font-size: 12px; color: var(--ink-3); }
+  .m-switch .ring { width: 26px; height: 26px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,0.1);
+    border-top-color: var(--amber); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .c-live { flex: none; font-size: 12px; color: var(--ink-2); display: none; align-items: center; gap: 8px;
     padding: 6px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
   .c-live.show { display: flex; }
@@ -919,7 +924,7 @@ document.addEventListener("gesturestart", e => e.preventDefault());
 // The transcript comes from /api/chat by byte offset; typing and keys go into the
 // session's kitty window on the PC (session_chat.py), as if typed there.
 const chat = {id: null, offset: null, s: null, ctl: false, dialog: null, dlgKey: null, hidden: null,
-              timer: null, busy: false, gone: false, screen: false, tools: {}, freeRow: null};
+              timer: null, busy: false, gone: false, switching: null, screen: false, tools: {}, freeRow: null};
 const CHAT_FAST_MS = 1200, CHAT_IDLE_MS = 2500;
 
 function mdInline(s) {
@@ -1003,7 +1008,8 @@ function addItems(items, reset, truncated) {
     if (el) frag.appendChild(el);
   }
   cList.appendChild(frag);
-  if (reset && !cList.children.length) cList.innerHTML = `<div class="m-more">nothing said yet</div>`;
+  if (reset && !cList.children.length) cList.innerHTML = `<div class="m-more m-empty">nothing said yet</div>`;
+  else if (!reset && items.length) cList.querySelector(".m-empty")?.remove();
   if (reset && chat.toMine && scrollToMine()) return;
   if (stick) cList.scrollTop = cList.scrollHeight;
 }
@@ -1059,11 +1065,17 @@ async function chatPoll() {
     const q = `api/chat?id=${encodeURIComponent(id)}` + (chat.offset != null ? `&offset=${chat.offset}` : "");
     const r = await fetch(q, {cache: "no-store"});
     if (id !== chat.id) return;
-    if (r.status === 404) { chat.gone = true; closeDialog(); renderChatHead(); return; }
+    if (r.status === 404) {
+      // Cleared on the PC (or here): the same session now goes by another id.
+      const moved = (await r.json().catch(() => ({}))).moved;
+      if (id !== chat.id) return;
+      if (moved) return followChat(moved);
+      chat.gone = true; closeDialog(); renderChatHead(); return;
+    }
     if (!r.ok) throw new Error(r.status);
     const j = await r.json();
     if (id !== chat.id) return;
-    chat.gone = false;
+    chat.gone = false; chat.switching = null;
     chat.s = j.session; chat.ctl = j.ctl; chat.offset = j.offset;
     addItems(j.items, j.reset, j.truncated);
     setDialog(j.dialog);
@@ -1076,18 +1088,28 @@ async function chatPoll() {
   }
 }
 
+const NEW_CONV = "Starting a new conversation…";
+const switchingHTML = what => `<div class="m-switch"><span class="ring"></span>${esc(what)}</div>`;
 function openChat(id, push = true) {
   const s = state && state.sessions.find(x => x.id === id);
-  Object.assign(chat, {id, offset: null, s: s || null, ctl: false, dialog: null, dlgKey: null, hidden: null,
+  const switching = chat.switching;
+  Object.assign(chat, {id, offset: null, s: s || (switching ? chat.s : null), ctl: false, dialog: null, dlgKey: null, hidden: null,
                        gone: false, screen: false, tools: {}, freeRow: null, toMine: false, fromNotif: false});
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
-  cList.innerHTML = `<div class="m-more">loading…</div>`;
+  cList.innerHTML = switching ? switchingHTML(switching) : `<div class="m-more">loading…</div>`;
   $("c-in").value = ""; fitInput();
   cmds.list = null; renderCmds();
   renderChatHead();
   lockPage(true);
   if (push) history.pushState({chat: id}, "", "#" + encodeURIComponent(id));
   chatPoll();
+}
+// Stay in the chat when its session's id changes (/clear, /resume): reopen it under the new one.
+function followChat(id, what = NEW_CONV) {
+  chat.switching = what;
+  closeDialog();
+  history.replaceState({chat: id}, "", "#" + encodeURIComponent(id));
+  openChat(id, false);
 }
 // Pin the list page while the chat is over it, at its current scroll, and put it back after.
 let pageY = 0;
@@ -1099,7 +1121,7 @@ function lockPage(on) {
 }
 function closeChat() {
   clearTimeout(chat.timer);
-  chat.id = null;
+  chat.id = chat.switching = null;
   closeDialog();
   if (document.body.classList.contains("resuming")) closeResume();
   lockPage(false);
@@ -1238,13 +1260,19 @@ async function sendPrompt() {
   if (!text || !chat.id || chat.busy) return;
   // claude's /resume picker is a scrolling list the phone can't drive; show our own.
   if (/^\/resume$/.test(text)) { $("c-in").value = ""; fitInput(); renderCmds(); return openResume(); }
+  // /clear starts a new conversation under a new id; the server waits for it and we follow.
+  const clearing = /^\/(clear|new|reset)$/.test(text), from = chat.id;
   chat.busy = true; renderChatHead();
+  if (clearing) { clearTimeout(chat.timer); chat.switching = NEW_CONV; cList.innerHTML = switchingHTML(NEW_CONV); }
   try {
-    await post("api/send", {id: chat.id, text});
+    const j = await post("api/send", {id: from, text});
     $("c-in").value = ""; fitInput(); renderCmds();
-    cList.scrollTop = cList.scrollHeight;
-    setTimeout(chatPoll, 700);
-  } catch (err) { toast(`not sent: ${err.message}`); }
+    if (clearing) { if (chat.id === from) followChat(j.id || from); }
+    else { cList.scrollTop = cList.scrollHeight; setTimeout(chatPoll, 700); }
+  } catch (err) {
+    toast(`not sent: ${err.message}`);
+    if (clearing && chat.id === from) openChat(from, false);
+  }
   finally { chat.busy = false; renderChatHead(); }
 }
 
@@ -1384,7 +1412,7 @@ $("rsm-body").addEventListener("click", async e => {
     const j = await post("api/resume", {id: from, to});
     closeResume();
     // The session is now that conversation, under its id: follow it.
-    if (chat.id === from) { history.replaceState({chat: j.id}, "", "#" + encodeURIComponent(j.id)); openChat(j.id, false); }
+    if (chat.id === from) followChat(j.id, "Opening the conversation…");
   } catch (err) { toast(`not resumed: ${err.message}`); }
   finally { $("rsm").classList.remove("busy"); }
 });
