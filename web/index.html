@@ -1402,8 +1402,37 @@ function fitChat(e) {
   // Keep the newest messages in view when the keyboard opens or closes (a resize), not on
   // every pan, which would pull the list down while typing.
   if (e && e.type === "resize" && document.activeElement === $("c-in") && nearBottom()) cList.scrollTop = cList.scrollHeight;
+  // Remember how tall the keyboard is, for focusComposer() next time.
+  const kb = Math.round(innerHeight - vv.height);
+  if (kb > 150) { kbH = kb; try { localStorage.setItem("kbH", kb); } catch {} }
 }
 if (vv) { vv.addEventListener("resize", fitChat); vv.addEventListener("scroll", fitChat); }
+
+// A tap on the composer: iOS pans the whole page up to show it above the keyboard, which
+// slides the header off the top until fitChat() snaps the panel back. Instead, focus it
+// ourselves with the panel already sized for the keyboard (or, before we know its height,
+// with the box lifted to the top for a moment), so iOS finds it in view and doesn't pan.
+let kbH = 0;
+try { kbH = +localStorage.getItem("kbH") || 0; } catch {}
+const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1);
+let tapY = null;
+$("c-in").addEventListener("touchstart", e => { tapY = e.touches.length === 1 ? e.touches[0].clientY : null; }, {passive: true});
+$("c-in").addEventListener("touchend", e => {
+  const t = e.currentTarget, y = tapY;
+  tapY = null;
+  if (!isIOS || !vv || innerWidth >= 760 || t.disabled || document.activeElement === t) return;
+  if (y === null || Math.abs(e.changedTouches[0].clientY - y) > 10) return;  // a drag, not a tap
+  e.preventDefault();
+  const c = $("chat"), stick = nearBottom();
+  if (kbH) c.style.height = (innerHeight - kbH) + "px";
+  else t.style.transform = `translateY(${80 - t.getBoundingClientRect().top}px)`;
+  if (stick) cList.scrollTop = cList.scrollHeight;
+  t.focus({preventScroll: true});
+  const n = t.value.length; t.setSelectionRange(n, n);
+  if (!kbH) setTimeout(() => { t.style.transform = ""; }, 120);
+});
+// No keyboard came up (a hardware one on the phone): undo the pre-sizing.
+$("c-in").addEventListener("blur", () => setTimeout(fitChat, 300));
 document.addEventListener("visibilitychange", () => { if (!document.hidden && chat.id) chatPoll(); });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
