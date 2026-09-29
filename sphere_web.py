@@ -10,7 +10,8 @@ kitty window on the desktop running `claude` in one of the projects under PROJEC
 
 Tapping a session opens its chat (session_chat): `GET /api/chat` streams the transcript
 by byte offset plus the dialog the session is stopped on, `POST /api/send` types a
-prompt into its kitty window and `POST /api/keys` answers a dialog.
+prompt into its kitty window and `POST /api/keys` answers a dialog. `GET /api/commands`
+lists what `/` offers in that session (slash_commands), for the composer's command picker.
 
 It also runs notify.Notifier, which pushes a notification to the phone (webpush) when a
 session stops on a dialog or finishes a turn. Push needs a secure context, so the same
@@ -35,6 +36,7 @@ from urllib.parse import parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from claude_sessions import collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
 import session_chat  # noqa: E402
+import slash_commands  # noqa: E402
 import notify  # noqa: E402
 import webpush  # noqa: E402
 from quota import daily_quota  # noqa: E402
@@ -259,11 +261,14 @@ class Handler(BaseHTTPRequestHandler):
             # The open app says which push subscription it is, so that device isn't notified meanwhile.
             webpush.set_active(self.headers.get("X-Push-Endpoint"))
             self._send(200, "application/json", state_json())
-        elif path in ("/api/chat", "/api/screen"):
+        elif path in ("/api/chat", "/api/screen", "/api/commands"):
             q = parse_qs(query)
             s = find_session((q.get("id") or [""])[0])
             if not s:
                 return self._send(404, "application/json", b'{"ok": false, "error": "no such session"}')
+            if path == "/api/commands":
+                cmds = slash_commands.list_commands(s["cwd"])
+                return self._send(200, "application/json", json.dumps({"commands": cmds}).encode())
             if path == "/api/screen":
                 text = None if s["headless"] else session_chat.read_screen(s["pids"])
                 return self._send(200, "application/json", json.dumps({"text": text}).encode())

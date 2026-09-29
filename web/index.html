@@ -324,6 +324,20 @@
   .c-foot .send { flex: none; width: 44px; height: 42px; border: 0; border-radius: 12px; background: var(--amber); color: #1a1406;
     font: inherit; font-size: 18px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .c-foot .send:disabled { background: rgba(255,255,255,0.08); color: var(--ink-4); cursor: default; }
+  /* "/" command picker, narrowed as you type. vh ignores the iOS keyboard, so it is capped at
+     ~3 rows and may shrink: the composer always keeps its room above the keyboard */
+  .c-cmds { flex: 0 1 auto; min-height: 0; display: none; max-height: min(24vh, 158px); overflow-y: auto; overscroll-behavior: contain;
+    margin: 6px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
+  .c-cmds.show { display: block; }
+  .c-cmds .row { display: block; width: 100%; text-align: left; font: inherit; background: none; border: 0; border-radius: 8px;
+    padding: 7px 10px; color: var(--ink); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .c-cmds .row.sel { background: rgba(250,191,64,0.12); }
+  .c-cmds .n { font-size: 13px; overflow-wrap: anywhere; }
+  .c-cmds .n b { color: var(--amber); }
+  .c-cmds .src { font-size: 10px; color: var(--ink-4); margin-left: 6px; }
+  .c-cmds .d { font-size: 11px; color: var(--ink-3); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c-cmds .none { font-size: 12px; color: var(--ink-3); padding: 8px 10px; }
   .c-why { flex: none; font-size: 11px; color: var(--ink-3); text-align: center; padding: 0 16px 4px; display: none; }
   .c-why.show { display: block; }
   .scr { flex: 1; min-height: 0; margin: 0; overflow: auto; font-size: 10.5px; border-radius: 0; border-width: 1px 0; }
@@ -446,6 +460,7 @@
   </div>
   <div class="c-live" id="c-live"></div>
   <div class="c-why" id="c-why"></div>
+  <div class="c-cmds" id="c-cmds" role="listbox" aria-label="Commands"></div>
   <div class="c-foot">
     <textarea class="field" id="c-in" rows="1" placeholder="Message claude…" enterkeyhint="send"></textarea>
     <button class="send" id="c-send" aria-label="Send" disabled>↑</button>
@@ -1058,6 +1073,7 @@ function openChat(id, push = true) {
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
   cList.innerHTML = `<div class="m-more">loading…</div>`;
   $("c-in").value = ""; fitInput();
+  cmds.list = null; renderCmds();
   renderChatHead();
   lockPage(true);
   if (push) history.pushState({chat: id}, "", "#" + encodeURIComponent(id));
@@ -1106,14 +1122,98 @@ function fitInput() {
   if (want !== h && stick) cList.scrollTop = cList.scrollHeight;
   else cList.scrollTop = top;
 }
-$("c-in").addEventListener("input", () => { fitInput(); renderChatHead(); });
+$("c-in").addEventListener("input", () => { fitInput(); renderCmds(); renderChatHead(); });
 $("c-in").addEventListener("keydown", e => {
+  if (cmdKey(e)) return;
   // Enter sends on a hardware keyboard; phones insert a newline and send with ↑.
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && matchMedia("(hover: hover)").matches) {
     e.preventDefault(); sendPrompt();
   }
 });
 $("c-send").addEventListener("click", sendPrompt);
+
+// ---- "/" commands ----
+// A lone "/word" in the composer lists the session's commands (/api/commands: built-ins,
+// skills, custom and plugin commands), narrowed on every key. Tapping one puts "/name " in
+// the box for arguments; on a hardware keyboard ↑↓ move, Tab completes, Enter sends it.
+const cmds = {list: null, forId: null, loading: false, sel: 0, shown: [], shut: null};
+async function loadCmds() {
+  const id = chat.id;
+  if (!id || cmds.loading) return;
+  cmds.loading = true;
+  try {
+    const r = await fetch(`api/commands?id=${encodeURIComponent(id)}`, {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    if (id === chat.id) { cmds.list = j.commands; cmds.forId = id; }
+  } catch (e) { /* offline: try again on the next key */ }
+  cmds.loading = false;
+  if (id === chat.id) renderCmds();
+}
+function cmdQuery() {
+  const t = $("c-in");
+  const m = !t.disabled && /^\/(\S*)$/.exec(t.value);
+  return m && t.value !== cmds.shut ? m[1].toLowerCase() : null;
+}
+function cmdRank(c, q) {
+  const n = c.name.toLowerCase();
+  if (!q || n.startsWith(q)) return 0;
+  if (n.split(/[:\-_]/).some(w => w.startsWith(q))) return 1;
+  if (n.includes(q)) return 2;
+  return q.length > 1 && c.desc.toLowerCase().includes(q) ? 3 : -1;
+}
+function renderCmds() {
+  const box = $("c-cmds"), q = cmdQuery();
+  if (q == null) { box.classList.remove("show"); cmds.shown = []; return; }
+  if (!cmds.list || cmds.forId !== chat.id) {
+    loadCmds();
+    setHTML(box, `<div class="none">loading…</div>`); box.classList.add("show"); return;
+  }
+  const prev = cmds.shown[cmds.sel];
+  cmds.shown = cmds.list.map(c => [cmdRank(c, q), c]).filter(([r]) => r >= 0)
+    .sort((a, b) => a[0] - b[0] || a[1].name.localeCompare(b[1].name)).map(([, c]) => c).slice(0, 60);
+  const keep = prev ? cmds.shown.indexOf(prev) : -1;
+  cmds.sel = keep >= 0 ? keep : 0;
+  const mark = n => {
+    const i = q ? n.toLowerCase().indexOf(q) : -1;
+    return i < 0 ? esc(n) : esc(n.slice(0, i)) + `<b>${esc(n.slice(i, i + q.length))}</b>` + esc(n.slice(i + q.length));
+  };
+  setHTML(box, cmds.shown.length ? cmds.shown.map((c, i) =>
+    `<button class="row${i === cmds.sel ? " sel" : ""}" role="option" data-i="${i}" tabindex="-1">` +
+    `<div class="n">/${mark(c.name)}<span class="src">${esc(c.src)}</span></div>` +
+    (c.desc ? `<div class="d">${esc(c.desc)}</div>` : "") + `</button>`).join("")
+    : `<div class="none">no matching command</div>`);
+  box.classList.add("show");
+  box.querySelector(".row.sel")?.scrollIntoView({block: "nearest"});
+}
+function pickCmd(i, send) {
+  const c = cmds.shown[i];
+  if (!c) return;
+  const t = $("c-in");
+  t.value = "/" + c.name + (send ? "" : " ");
+  fitInput(); renderCmds(); renderChatHead();
+  if (send) sendPrompt();
+  else { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+}
+function cmdKey(e) {
+  if (!$("c-cmds").classList.contains("show") || !cmds.shown.length || e.isComposing) return false;
+  const n = cmds.shown.length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") cmds.sel = (cmds.sel + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+  else if (e.key === "Tab") { pickCmd(cmds.sel, false); e.preventDefault(); return true; }
+  else if (e.key === "Enter" && !e.shiftKey && matchMedia("(hover: hover)").matches) { pickCmd(cmds.sel, true); e.preventDefault(); return true; }
+  else if (e.key === "Escape") { cmds.shut = $("c-in").value; renderCmds(); e.preventDefault(); e.stopPropagation(); return true; }
+  else return false;
+  e.preventDefault();
+  $("c-cmds").querySelectorAll(".row").forEach((r, i) => r.classList.toggle("sel", i === cmds.sel));
+  $("c-cmds").querySelector(".row.sel")?.scrollIntoView({block: "nearest"});
+  return true;
+}
+// Keep the keyboard up: a tap on a row mustn't take focus from the composer.
+$("c-cmds").addEventListener("mousedown", e => e.preventDefault());
+$("c-cmds").addEventListener("click", e => {
+  const r = e.target.closest(".row");
+  if (r) pickCmd(+r.dataset.i, false);
+});
 
 async function post(path, body) {
   const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -1128,7 +1228,7 @@ async function sendPrompt() {
   chat.busy = true; renderChatHead();
   try {
     await post("api/send", {id: chat.id, text});
-    $("c-in").value = ""; fitInput();
+    $("c-in").value = ""; fitInput(); renderCmds();
     cList.scrollTop = cList.scrollHeight;
     setTimeout(chatPoll, 700);
   } catch (err) { toast(`not sent: ${err.message}`); }
