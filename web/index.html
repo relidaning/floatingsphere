@@ -359,12 +359,12 @@
     padding: 8px max(16px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     transform: translateY(105%); visibility: hidden; transition: transform .25s cubic-bezier(.2,.8,.2,1), visibility 0s .25s;
   }
-  body.asking .dlg-scrim { opacity: 1; pointer-events: auto; }
-  body.asking .dlg { transform: none; visibility: visible; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
+  body.asking .dlg-scrim, body.resuming .dlg-scrim { opacity: 1; pointer-events: auto; }
+  body.asking #dlg, body.resuming #rsm { transform: none; visibility: visible; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
   @media (min-width: 760px) {
     .dlg { left: 50%; right: auto; bottom: auto; top: 50%; width: 520px; max-height: 84vh; border: 1px solid rgba(217,89,38,0.45);
       border-radius: 16px; padding: 16px; transform: translate(-50%, calc(-50% + 16px)); opacity: 0; transition: transform .2s, opacity .2s, visibility 0s .2s; }
-    body.asking .dlg { transform: translate(-50%, -50%); opacity: 1; transition: transform .2s, opacity .2s; }
+    body.asking #dlg, body.resuming #rsm { transform: translate(-50%, -50%); opacity: 1; transition: transform .2s, opacity .2s; }
   }
   .dlg .head { margin-bottom: 8px; }
   .dlg .head h2 { color: #ec8a5f; }
@@ -389,6 +389,10 @@
   .d-hint { font-size: 11px; color: var(--ink-4); margin-top: 10px; }
   .dlg .keys { padding: 10px 0 0; }
   .dlg.busy .d-rows { opacity: .5; pointer-events: none; }
+  #rsm { border-color: rgba(250,191,64,0.35); }
+  #rsm .head h2 { color: var(--amber); }
+  #rsm .field { width: 100%; margin-bottom: 8px; }
+  .d-none { font-size: 12px; color: var(--ink-3); padding: 8px 2px; }
 </style>
 </head>
 <body>
@@ -475,6 +479,12 @@
     <button class="key" data-k="left" id="d-prev">← prev</button><button class="key" data-k="right" id="d-next">next →</button>
     <button class="key" data-k="escape">esc</button>
   </div>
+</section>
+<section class="dlg" id="rsm" role="dialog" aria-modal="true" aria-labelledby="rsm-title">
+  <div class="grip"></div>
+  <div class="head"><h2 id="rsm-title">Resume a conversation</h2><button class="x" id="rsm-x" aria-label="Close">✕</button></div>
+  <input class="field" id="rsm-q" placeholder="search" autocomplete="off" enterkeyhint="search">
+  <div class="d-body" id="rsm-body"></div>
 </section>
 <div class="toast" id="toast"></div>
 <script>
@@ -881,7 +891,7 @@ function maybeReload() {
   if (!updateReady) return;
   const b = document.body.classList, input = $("c-in");
   // (A draft only counts in an open chat: opening any chat empties the box anyway.)
-  if (b.contains("adding") || b.contains("asking") || (chat.id && input.value.trim()) || document.activeElement === input) return;
+  if (b.contains("adding") || b.contains("asking") || b.contains("resuming") || (chat.id && input.value.trim()) || document.activeElement === input) return;
   // Inside a chat only right after coming back to the app, so the view never jumps
   // while being read. The reload reopens the chat from #<id>.
   if (chat.id && Date.now() - shownAt > 4000) return;
@@ -1091,6 +1101,7 @@ function closeChat() {
   clearTimeout(chat.timer);
   chat.id = null;
   closeDialog();
+  if (document.body.classList.contains("resuming")) closeResume();
   lockPage(false);
   $("chat").style.transform = "";
   document.activeElement?.blur();
@@ -1225,6 +1236,8 @@ async function post(path, body) {
 async function sendPrompt() {
   const text = $("c-in").value.trim();
   if (!text || !chat.id || chat.busy) return;
+  // claude's /resume picker is a scrolling list the phone can't drive; show our own.
+  if (/^\/resume$/.test(text)) { $("c-in").value = ""; fitInput(); renderCmds(); return openResume(); }
   chat.busy = true; renderChatHead();
   try {
     await post("api/send", {id: chat.id, text});
@@ -1318,8 +1331,63 @@ function answerFree(i) {
 }
 $("d-keys").addEventListener("click", e => { const k = e.target.closest("[data-k]"); if (k) sendKeys([{key: k.dataset.k}]); });
 $("dlg-x").addEventListener("click", () => closeDialog(true));
-$("dlg-scrim").addEventListener("click", () => closeDialog(true));
+$("dlg-scrim").addEventListener("click", () => {
+  if (document.body.classList.contains("resuming")) closeResume(); else closeDialog(true);
+});
 $("c-live").addEventListener("click", e => { if (e.target.closest("#c-ask")) openDialog(); });
+
+// ---- /resume: the project's past conversations (GET /api/resume); a pick types `/resume <id>` ----
+const rsm = {list: null, forId: null, at: 0};
+function fmtAgo(ts) {
+  const s = Math.max(0, rsm.at - ts);
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`;
+async function openResume() {
+  const id = chat.id;
+  document.activeElement?.blur();
+  rsm.list = null; rsm.forId = id; $("rsm-q").value = "";
+  document.body.classList.add("resuming");
+  renderResume();
+  try {
+    const r = await fetch(`api/resume?id=${encodeURIComponent(id)}`, {cache: "no-store"});
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (rsm.forId !== id) return;
+    rsm.list = j.sessions; rsm.at = j.now;
+  } catch (err) { rsm.list = []; toast(`can't list conversations: ${err.message}`); }
+  renderResume();
+}
+function closeResume() { document.body.classList.remove("resuming"); rsm.forId = null; document.activeElement?.blur(); maybeReload(); }
+function renderResume() {
+  const q = $("rsm-q").value.trim().toLowerCase();
+  let html;
+  if (!rsm.list) html = `<div class="d-none">loading…</div>`;
+  else {
+    const rows = rsm.list.map((x, i) => [x, i]).filter(([x]) => !q || (x.title + " " + x.prompt).toLowerCase().includes(q));
+    html = rows.length ? `<div class="d-rows">` + rows.map(([x, i]) => `<button class="d-row" data-i="${i}">
+      <span class="lb">${esc(x.title)}<span class="ds">${x.prompt && x.prompt !== x.title ? esc(x.prompt) + "<br>" : ""}${fmtAgo(x.mtime)} · ${fmtSize(x.size)}</span></span></button>`).join("") + `</div>`
+      : `<div class="d-none">${rsm.list.length ? "no match" : "no earlier conversations in this project"}</div>`;
+  }
+  setHTML($("rsm-body"), html);
+}
+$("rsm-q").addEventListener("input", renderResume);
+$("rsm-x").addEventListener("click", closeResume);
+$("rsm-body").addEventListener("click", async e => {
+  const b = e.target.closest(".d-row");
+  if (!b || !rsm.list || !chat.id) return;
+  const to = rsm.list[+b.dataset.i].id, from = chat.id;
+  $("rsm").classList.add("busy");
+  try {
+    const j = await post("api/resume", {id: from, to});
+    closeResume();
+    // The session is now that conversation, under its id: follow it.
+    if (chat.id === from) { history.replaceState({chat: j.id}, "", "#" + encodeURIComponent(j.id)); openChat(j.id, false); }
+  } catch (err) { toast(`not resumed: ${err.message}`); }
+  finally { $("rsm").classList.remove("busy"); }
+});
 
 // ---- raw terminal screen, for anything the chat and dialog views don't cover ----
 async function screenPoll() {
@@ -1436,7 +1504,8 @@ $("c-in").addEventListener("blur", () => setTimeout(fitChat, 300));
 document.addEventListener("visibilitychange", () => { if (!document.hidden && chat.id) chatPoll(); });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
-  if (document.body.classList.contains("asking")) closeDialog(true);
+  if (document.body.classList.contains("resuming")) closeResume();
+  else if (document.body.classList.contains("asking")) closeDialog(true);
   else if (chat.id && !document.body.classList.contains("adding")) leaveChat();
 });
 // ---- 🔔 : push notifications (sw.js shows them, notify.py on the PC sends them) ----

@@ -5,7 +5,8 @@
 # Two rofi prompts, then a terminal:
 #   1. the project directory (recently used first, then $PROJECTS_ROOT/*)
 #   2. an opening task, sent to Claude as its first prompt (Enter to skip)
-#   3. kitty running `claude --name <dir basename> "<task>"` in that project
+#   3. kitty running `claude --name <dir basename> "<task>"` in that project,
+#      as a tab of the kitty group on the active workspace (kitty_group.sh)
 #
 # Why rofi and not a GTK dialog: the popup that launches this closes itself
 # the moment "+" is clicked (before this script even runs), so there's no
@@ -88,6 +89,7 @@ export CLAUDE_NEW_PROMPT="$task"
 
 # `zsh -ic` sources .zshrc (the proxy exports claude needs live there), and the
 # trailing `exec zsh -i` keeps the terminal around after the session ends.
-setsid kitty --directory "$dir" \
+# kitty_group.sh opens it as a tab of the kitty group on this workspace.
+"$(dirname "$(readlink -f "$0")")/kitty_group.sh" setsid -f kitty --directory "$dir" \
     zsh -ic 'command claude --name "$CLAUDE_NEW_LABEL" ${CLAUDE_NEW_PROMPT:+"$CLAUDE_NEW_PROMPT"}; exec zsh -i' \
-    >/dev/null 2>&1 &
+    >/dev/null 2>&1

@@ -303,6 +303,84 @@ def send_steps(pids, steps):
     return True
 
 
+# ---------------------------------------------------------------- resume
+
+RESUME_MAX = 60               # newest transcripts offered by the web's /resume sheet
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_resume_cache = {}            # path -> (mtime, size, info)
+
+
+def _prompt_text(entry):
+    """A typed prompt's text, or None for tool results, commands and injected context."""
+    if entry.get("type") != "user" or entry.get("isMeta") or entry.get("isSidechain"):
+        return None
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, list):
+        content = " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+    text = _REMINDER.sub("", content or "").strip()
+    return None if not text or text.startswith("<") else text
+
+
+def _transcript_info(path):
+    """Title and prompts of one transcript, as /resume shows it; None if nothing was ever asked."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    hit = _resume_cache.get(path)
+    if hit and hit[:2] == (st.st_mtime, st.st_size):
+        return hit[2]
+    titles, first, last, headless = {}, None, None, False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                # Cheap substring checks first: transcripts run to megabytes of tool output.
+                if first is None and '"type":"user"' in line:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    # `claude -p` runs (SESSION.md writer, maxer): claude's own picker hides them too.
+                    if e.get("entrypoint", "cli") != "cli":
+                        headless = True
+                        break
+                    first = _prompt_text(e)
+                elif '"type":"custom-title"' in line or '"type":"ai-title"' in line or '"type":"last-prompt"' in line:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    for k in ("customTitle", "aiTitle", "lastPrompt"):
+                        if e.get(k):
+                            titles[k] = e[k]
+    except OSError:
+        return None
+    last = titles.get("lastPrompt") or first
+    info = None
+    if (first or last) and not headless:
+        info = {"title": _clip(titles.get("customTitle") or titles.get("aiTitle") or first or last, 120),
+                "prompt": _clip(last, 200), "mtime": st.st_mtime, "size": st.st_size}
+    _resume_cache[path] = (st.st_mtime, st.st_size, info)
+    return info
+
+
+def list_resumable(cwd, exclude=()):
+    """Past sessions of this project, newest first, for the web's /resume sheet."""
+    files = glob.glob(os.path.join(PROJECTS_DIR, _project_slug(cwd), "*.jsonl"))
+    files = sorted(files, key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)
+    out = []
+    for path in files:
+        sid = os.path.basename(path)[:-len(".jsonl")]
+        if sid in exclude or not _UUID.match(sid):
+            continue
+        info = _transcript_info(path)
+        if info:
+            out.append(dict(info, id=sid))
+            if len(out) >= RESUME_MAX:
+                break
+    return out
+
+
 # ---------------------------------------------------------------- dialogs
 
 _RULE = re.compile(r"^[─━]{8,}$")

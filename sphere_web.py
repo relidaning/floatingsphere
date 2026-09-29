@@ -12,6 +12,8 @@ Tapping a session opens its chat (session_chat): `GET /api/chat` streams the tra
 by byte offset plus the dialog the session is stopped on, `POST /api/send` types a
 prompt into its kitty window and `POST /api/keys` answers a dialog. `GET /api/commands`
 lists what `/` offers in that session (slash_commands), for the composer's command picker.
+A bare `/resume` isn't typed: the page lists the project's past conversations
+(`GET /api/resume`) and `POST /api/resume` types `/resume <id>` for the one picked.
 
 It also runs notify.Notifier, which pushes a notification to the phone (webpush) when a
 session stops on a dialog or finishes a turn. Push needs a secure context, so the same
@@ -47,6 +49,7 @@ TLS_PORT = int(os.environ.get("SPHERE_WEB_TLS_PORT", "8766"))
 TLS_CERT = os.path.join(webpush.STATE_DIR, "tls-cert.pem")
 TLS_KEY = os.path.join(webpush.STATE_DIR, "tls-key.pem")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+KITTY_GROUP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kitty_group.sh")
 # Only these are served; nothing else under web/ (or outside it) is reachable.
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -73,6 +76,7 @@ RECENT_MAX = 15
 PROMPT_MAX = 4000
 CHAT_PROMPT_MAX = 20000
 STEPS_MAX = 24
+RESUME_WAIT_S = 8
 # The client picks flags by these keys; it never sends argv text.
 CLAUDE_JSON = os.path.expanduser("~/.claude.json")
 FLAGS = {"skip_permissions": "--dangerously-skip-permissions", "rc": "--remote-control"}
@@ -218,7 +222,8 @@ def start_session(project, flags, prompt):
     # command string (same as claude_new.sh); `zsh -ic` sources .zshrc for the proxy
     # exports, and `exec zsh -i` keeps the terminal open after the session ends.
     # --expand-environment=no: systemd would otherwise eat the zsh ${...} below itself.
-    cmd = ["systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no", f"--unit={unit}",
+    # kitty_group.sh runs it and then tabs the new window into the workspace's kitty group.
+    cmd = [KITTY_GROUP, "systemd-run", "--user", "--collect", "--quiet", "--expand-environment=no", f"--unit={unit}",
            f"--working-directory={path}",
            f"--setenv=CLAUDE_NEW_LABEL={project}",
            f"--setenv=CLAUDE_NEW_FLAGS={' '.join(argv)}",
@@ -261,7 +266,7 @@ class Handler(BaseHTTPRequestHandler):
             # The open app says which push subscription it is, so that device isn't notified meanwhile.
             webpush.set_active(self.headers.get("X-Push-Endpoint"))
             self._send(200, "application/json", state_json())
-        elif path in ("/api/chat", "/api/screen", "/api/commands"):
+        elif path in ("/api/chat", "/api/screen", "/api/commands", "/api/resume"):
             q = parse_qs(query)
             s = find_session((q.get("id") or [""])[0])
             if not s:
@@ -269,6 +274,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/commands":
                 cmds = slash_commands.list_commands(s["cwd"])
                 return self._send(200, "application/json", json.dumps({"commands": cmds}).encode())
+            if path == "/api/resume":
+                past = session_chat.list_resumable(s["cwd"], exclude={s["session_id"]})
+                return self._send(200, "application/json", json.dumps({"sessions": past, "now": time.time()}).encode())
             if path == "/api/screen":
                 text = None if s["headless"] else session_chat.read_screen(s["pids"])
                 return self._send(200, "application/json", json.dumps({"text": text}).encode())
@@ -313,8 +321,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, "text/plain", b"bad request")
         raw = self.rfile.read(length)
         path = self.path.split("?", 1)[0]
-        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys", "/api/push/on", "/api/push/off",
-                        "/api/push/away"):
+        if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys", "/api/resume", "/api/push/on",
+                        "/api/push/off", "/api/push/away"):
             return self._send(404, "text/plain", b"not found")
         # Requiring a JSON body makes a cross-site request need a CORS preflight,
         # which this server never answers, so another web page open on the phone
@@ -338,6 +346,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, "application/json", b'{"ok": false, "error": "no such session"}')
         if path in ("/api/send", "/api/keys"):
             return self._type(path, match, body)
+        if path == "/api/resume":
+            return self._resume(match, body.get("to"))
         stop_session(match["pids"])
         _cache["at"] = 0.0  # next poll rescans instead of serving the pre-stop list
         self._send(200, "application/json", b'{"ok": true}')
@@ -375,6 +385,28 @@ class Handler(BaseHTTPRequestHandler):
             return self._fail(409, "no kitty window with remote control for this session")
         _cache["at"] = 0.0
         self._send(200, "application/json", b'{"ok": true}')
+
+    def _resume(self, s, to):
+        """The /resume sheet's pick: switch the session's terminal to a past conversation.
+
+        Typed as `/resume <id>`, which skips claude's own picker. The session's id is its
+        conversation's, so it changes; the reply carries the new one for the open chat.
+        """
+        if s["headless"]:
+            return self._fail(409, "headless session: nothing to type into")
+        if s["status"] != "idle":
+            return self._fail(409, "wait for the turn to end first")
+        # Only a past conversation of this project, as listed; never free text.
+        if not isinstance(to, str) or to not in {p["id"] for p in session_chat.list_resumable(s["cwd"])}:
+            return self._send(404, "application/json", b'{"ok": false, "error": "no such conversation"}')
+        if not session_chat.send_prompt(s["pids"], f"/resume {to}"):
+            return self._fail(409, "no kitty window with remote control for this session")
+        # Wait for the registry to follow, so the chat's next poll finds the session under its new id.
+        deadline = time.time() + RESUME_WAIT_S
+        while time.time() < deadline and not any(x["session_id"] == to for x in collect_sessions()):
+            time.sleep(0.2)
+        _cache["at"] = 0.0
+        self._send(200, "application/json", json.dumps({"ok": True, "id": to}).encode())
 
     def _push(self, path, body):
         """🔔: keep (on) or drop (off) this browser's push subscription; away: the app left the foreground."""
