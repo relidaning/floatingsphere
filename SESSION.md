@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-09-30 — Voice control idea, discussed and dropped
+Discussion only, no code changed. The recommended design was a mic button in the phone composer: audio goes to `sphere-web`, local faster-whisper transcribes it on the laptop's RTX 3050 (4 GB) in its own on-demand process, and the text lands in the composer for review, never sent straight to Claude or used to pick dialog options. Voice-answering dialogs and desktop push-to-talk were advised against. The user then said to forget it, so nothing was built.
+
 ## 2026-09-30 — Hide /data/apps/data from pickers; one list on iOS swipe-back
 `/data/apps/data` holds d2l datasets (d2l notebooks download into `../data`), so it's now skipped by `NOT_PROJECTS` in both `sphere_web.list_projects()` and `claude_new.sh` (`3ae5fcf`); the folder itself was kept. Swiping back from a chat showed two session lists because iOS's edge swipe (sliding over its snapshot) and the panel's own touch drag both animated, so touches within 24px of the left edge are now left to iOS and a `popstate` the page didn't start closes the chat without a transition (`b7c5e28`, pushed, not yet tried on the iPhone).
 
