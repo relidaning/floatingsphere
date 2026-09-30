@@ -26,6 +26,13 @@ using quota faster than time is passing.
 the 7-day % by one share. It comes from `~/.claude/state/claude-maxer-day.json`, or is
 computed the same way (`quota.py`) when maxer hasn't written today's.
 
+## Install
+
+`./install.sh` checks the dependencies and enables the `sphere-web` user service. The
+sphere itself is started by Hyprland: the `exec-once`, window rules and kitty remote-control
+settings are in [relidaning/dotfiles](https://github.com/relidaning/dotfiles), whose
+installer clones this repo to `/data/apps/floatingsphere` and runs `install.sh`.
+
 ## Interaction
 
 | Action              | Does                                                                        |
