@@ -1,11 +1,10 @@
 """
-usage_history: how much of the 7-day limit each week used, for the web app's weekly chart.
+usage_history: how much of the 7-day limit each week used, for the web app's weekly board.
 
 sphere_web runs Recorder, which reads claude-maxer's usage snapshot every POLL_S and keeps
 one period per 7-day window in ~/.config/floatingsphere/usage-weeks.json:
   {"start", "end", "reset", "peak", "last", "early", "days": {"YYYY-MM-DD": 7d % at the day's end}}
-`days` holds the running 7d % per local day, so the chart can split a week's bar into
-what each day added.
+`days` holds the running 7d % per local day (the board doesn't use it yet).
 
 A new period starts when the snapshot's `resets_at` moves on (the normal weekly reset),
 or when 7d drops by more than DROP_PP under the same `resets_at`: Anthropic sometimes

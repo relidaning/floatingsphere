@@ -17,7 +17,7 @@ A bare `/resume` isn't typed: the page lists the project's past conversations
 
 It also runs notify.Notifier, which pushes a notification to the phone (webpush) when a
 session stops on a dialog or finishes a turn, and usage_history.Recorder, which keeps
-each week's 7d usage for the page's weekly chart (`GET /api/weeks`).
+each week's 7d usage for the page's weekly board (`GET /api/weeks`).
 Push needs a secure context, so the same app is served over HTTPS on SPHERE_WEB_TLS_PORT too, with a cert the phone trusts
 (TLS_CERT / TLS_KEY, a copy of besmart's mkcert cert); the 🔔 in the page subscribes.
 
