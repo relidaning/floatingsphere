@@ -24,6 +24,8 @@
 set -uo pipefail
 
 PROJECTS_ROOT="${CLAUDE_NEW_PROJECTS_ROOT:-/data/apps}"
+# Dirs under PROJECTS_ROOT that aren't projects; sphere_web.py has the same list.
+NOT_PROJECTS=(data)
 RECENT_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/claude-monitor/recent-dirs"
 RECENT_MAX=15
 ROFI_CONFIG="$(dirname "$(readlink -f "$0")")/rofi-claude-new.rasi"
@@ -44,6 +46,11 @@ candidates() {
     find "$PROJECTS_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort
 }
 
+not_projects() {
+    local name
+    for name in "${NOT_PROJECTS[@]}"; do printf '%s/%s\n' "$PROJECTS_ROOT" "$name"; done
+}
+
 record_recent() {
     local dir=$1 tmp
     mkdir -p "$(dirname "$RECENT_FILE")" || return 0
@@ -58,7 +65,7 @@ record_recent() {
 # A picker is already open — a second click should not stack another one.
 pidof rofi >/dev/null 2>&1 && exit 0
 
-dir=$(candidates | awk 'NF && !seen[$0]++' |
+dir=$(candidates | grep -vxFf <(not_projects) | awk 'NF && !seen[$0]++' |
     rofi -dmenu -i -config "$ROFI_CONFIG" -p "project" \
         -theme-str 'entry { placeholder: "  project directory"; }')
 [ -n "$dir" ] || exit 0

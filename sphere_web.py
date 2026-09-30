@@ -70,6 +70,9 @@ SNAPSHOT_PATH = os.path.expanduser("~/.claude/state/usage_snapshot.json")
 CACHE_S = 1.5  # several open tabs polling at once share one registry scan
 # Shared with claude_new.sh, so the desktop picker and the phone agree on "recent".
 PROJECTS_ROOT = os.environ.get("CLAUDE_NEW_PROJECTS_ROOT", "/data/apps")
+# Dirs under PROJECTS_ROOT that aren't projects (data/ is d2l's download dir: its
+# notebooks fetch into ../data). claude_new.sh has the same list.
+NOT_PROJECTS = {"data"}
 RECENT_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
                            "claude-monitor", "recent-dirs")
 RECENT_MAX = 15
@@ -198,7 +201,7 @@ def list_projects():
     """Project directory names under PROJECTS_ROOT, recently used first."""
     try:
         names = sorted(e.name for e in os.scandir(PROJECTS_ROOT)
-                       if e.is_dir() and not e.name.startswith("."))
+                       if e.is_dir() and not e.name.startswith(".") and e.name not in NOT_PROJECTS)
     except OSError:
         return []
     root = os.path.abspath(PROJECTS_ROOT)
