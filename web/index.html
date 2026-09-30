@@ -1134,10 +1134,19 @@ function closeChat() {
   maybeReload();
 }
 // Back = history back, so the phone's own back gesture / button leaves the chat too.
-function leaveChat() { if (history.state && history.state.chat) history.back(); else closeChat(); }
+let ownBack = false;
+function leaveChat() {
+  if (history.state && history.state.chat) { ownBack = true; history.back(); } else closeChat();
+}
 addEventListener("popstate", e => {
+  // A popstate we didn't start is iOS's edge swipe, which has already animated the page
+  // over its snapshot of the list; sliding the panel as well showed two lists. Switch at once.
+  const el = $("chat"), instant = !ownBack;
+  ownBack = false;
+  if (instant) el.classList.add("dragging");
   if (e.state && e.state.chat) { if (chat.id !== e.state.chat) openChat(e.state.chat, false); }
   else if (chat.id) closeChat();
+  if (instant) { el.offsetWidth; el.classList.remove("dragging"); }
 });
 $("c-back").addEventListener("click", leaveChat);
 
@@ -1444,14 +1453,17 @@ $("scr-keys").addEventListener("click", e => {
 });
 
 // ---- swipe right to go back to the list (the panel follows the finger) ----
+const EDGE_PX = 24;
 (() => {
   const el = $("chat");
   let x0 = null, y0 = 0, dx = 0, t0 = 0, dragging = false;
   el.addEventListener("touchstart", e => {
     if (e.touches.length !== 1 || document.body.classList.contains("asking")) return;
     const t = e.touches[0];
-    // leave sideways-scrollable code and the text box alone, except from the very edge
-    if (t.clientX > 28 && e.target.closest("pre, textarea, input, .keys")) return;
+    // The screen edge belongs to iOS's own back swipe (see popstate); following it here
+    // as well slid the panel off over iOS's snapshot, and two lists showed. Also leave
+    // sideways-scrollable code and the text box alone.
+    if (t.clientX < EDGE_PX || e.target.closest("pre, textarea, input, .keys")) return;
     x0 = t.clientX; y0 = t.clientY; dx = 0; t0 = Date.now(); dragging = false;
   }, {passive: true});
   el.addEventListener("touchmove", e => {
