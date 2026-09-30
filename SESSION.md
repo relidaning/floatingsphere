@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-09-30 — Hide /data/apps/data from pickers; one list on iOS swipe-back
+`/data/apps/data` holds d2l datasets (d2l notebooks download into `../data`), so it's now skipped by `NOT_PROJECTS` in both `sphere_web.list_projects()` and `claude_new.sh` (`3ae5fcf`); the folder itself was kept. Swiping back from a chat showed two session lists because iOS's edge swipe (sliding over its snapshot) and the panel's own touch drag both animated, so touches within 24px of the left edge are now left to iOS and a `popstate` the page didn't start closes the chat without a transition (`b7c5e28`, pushed, not yet tried on the iPhone).
+
 ## 2026-09-30 — Phone "+" opens the new session's chat (v0.0.12)
 `/api/new` now waits up to `NEW_WAIT_S` (20s) for the new claude to register and returns its `id`, matched by ancestry (`_has_ancestor`) to the `MainPID` of the `claude-new-…` unit it started (not by cgroup, since kitty moves its children into its own scope), so it picks the right session even with others open in the same project; the page opens that chat, or falls back to the old toast. Tested end to end through the API (~2s to the id, then stopped), not tapped on the phone; committed as `8e7b9db`, tagged `v0.0.12` and pushed ("rag it" meant "tag it", so nothing went to the RAG index).
 
