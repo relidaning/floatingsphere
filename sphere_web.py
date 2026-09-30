@@ -271,6 +271,8 @@ def start_session(project, flags, prompt):
         return f"launch failed: {e}"
     if r.returncode:
         return "launch failed: " + (r.stderr.strip().splitlines() or ["?"])[-1]
+    for line in r.stderr.strip().splitlines():
+        print("new:", project, line, flush=True)  # kitty_group.sh: why it didn't join the group
     record_recent(path)
     return None
 

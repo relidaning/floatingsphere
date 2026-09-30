@@ -324,7 +324,9 @@
   .c-live .ask { margin-left: auto; font: inherit; font-size: 12px; font-weight: bold; color: #1a1406; background: var(--waiting);
     border: 0; border-radius: 9px; padding: 6px 12px; cursor: pointer; }
   .c-foot { flex: none; display: flex; gap: 8px; align-items: flex-end;
-    padding: 8px max(12px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+    padding: 8px max(12px, env(safe-area-inset-right)) max(8px, calc(env(safe-area-inset-bottom) - 16px)) max(12px, env(safe-area-inset-left)); }
+  /* keyboard up: the home-indicator inset is under the keyboard, so sit right on top of it */
+  .chat.kb .c-foot { padding-bottom: 6px; }
   .c-foot textarea { flex: 1; min-height: 42px; max-height: 32vh; resize: none; }
   .c-foot .send { flex: none; width: 44px; height: 42px; border: 0; border-radius: 12px; background: var(--amber); color: #1a1406;
     font: inherit; font-size: 18px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -1501,6 +1503,7 @@ function fitChat(e) {
   // Remember how tall the keyboard is, for focusComposer() next time.
   const kb = Math.round(innerHeight - vv.height);
   if (kb > 150) { kbH = kb; try { localStorage.setItem("kbH", kb); } catch {} }
+  c.classList.toggle("kb", kb > 150);
 }
 if (vv) { vv.addEventListener("resize", fitChat); vv.addEventListener("scroll", fitChat); }
 
@@ -1520,7 +1523,7 @@ $("c-in").addEventListener("touchend", e => {
   if (y === null || Math.abs(e.changedTouches[0].clientY - y) > 10) return;  // a drag, not a tap
   e.preventDefault();
   const c = $("chat"), stick = nearBottom();
-  if (kbH) c.style.height = (innerHeight - kbH) + "px";
+  if (kbH) { c.style.height = (innerHeight - kbH) + "px"; c.classList.add("kb"); }
   else t.style.transform = `translateY(${80 - t.getBoundingClientRect().top}px)`;
   if (stick) cList.scrollTop = cList.scrollHeight;
   t.focus({preventScroll: true});

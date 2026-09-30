@@ -42,15 +42,27 @@ dispatch() {
 rc=$?
 [ "$rc" -eq 0 ] && [ -n "$target" ] || exit "$rc"
 
+# Up to ~10s for the window: a cold kitty under load can take a few seconds.
 new=""
-for _ in $(seq 1 60); do
+for _ in $(seq 1 200); do
     sleep 0.05
     new=$(hyprctl clients -j | jq -r --argjson before "$before" '
         [.[] | select(.class == "kitty" and (.address as $a | $before | index($a) | not))]
         | .[0].address // empty')
     [ -n "$new" ] && break
 done
-[ -n "$new" ] || exit 0
+[ -n "$new" ] || { echo "kitty_group: no new kitty window" >&2; exit 0; }
+
+# The window shows up in the client list before dwindle has tiled it, at a provisional
+# position, and a direction taken from that one points away from the group. Wait until
+# its geometry holds still for a few polls.
+geom() { hyprctl clients -j | jq -c --arg n "$new" '.[] | select(.address == $n) | [.at, .size]'; }
+last=$(geom); same=0
+for _ in $(seq 1 40); do
+    sleep 0.05
+    g=$(geom)
+    if [ "$g" = "$last" ]; then same=$((same + 1)); [ "$same" -ge 3 ] && break; else same=0; last=$g; fi
+done
 
 # Direction from the new window to the group, by their centres.
 read -r dx dy < <(hyprctl clients -j | jq -r --arg t "$target" --arg n "$new" '
@@ -65,4 +77,8 @@ else
     if [ "$dy" -lt 0 ]; then dir=u; else dir=d; fi
 fi
 dispatch "dispatch focuswindow address:$new; dispatch moveintogroup $dir"
+
+joined=$(hyprctl clients -j | jq -r --arg t "$target" --arg n "$new" '
+    .[] | select(.address == $t) | .grouped | index($n) != null')
+[ "$joined" = true ] || echo "kitty_group: moveintogroup $dir did not join (dx=$dx dy=$dy)" >&2
 exit 0
