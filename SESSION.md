@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-09-30 — Phone "+" opens the new session's chat (v0.0.12)
+`/api/new` now waits up to `NEW_WAIT_S` (20s) for the new claude to register and returns its `id`, matched by ancestry (`_has_ancestor`) to the `MainPID` of the `claude-new-…` unit it started (not by cgroup, since kitty moves its children into its own scope), so it picks the right session even with others open in the same project; the page opens that chat, or falls back to the old toast. Tested end to end through the API (~2s to the id, then stopped), not tapped on the phone; committed as `8e7b9db`, tagged `v0.0.12` and pushed ("rag it" meant "tag it", so nothing went to the RAG index).
+
 ## 2026-09-30 — "+" misses the kitty group; composer sits lower
 A lidaning-skills session from the phone "+" opened beside the 4-tab group rather than in it. The project wasn't the cause: the new kitty is listed before dwindle tiles it, so `moveintogroup` sometimes took its direction from that temporary spot. `kitty_group.sh` now waits (up to ~10s) for the window's geometry to hold still, then checks that it joined, and a miss goes to sphere-web's journal. It hasn't been confirmed on a real phone launch yet. The composer's bottom gap went from the 34px home-indicator inset to 18px, and to 6px with the keyboard up. Committed as `5e2a1db`. The dirty `SESSION.md` would have made claude-maxer tasks refuse to commit in this repo, so it was committed on its own (`9366d7a`), and a memory now says root `SESSION.md`/`CLAUDE.md` always get committed and pushed unless they hold something sensitive, since the repo is public.
 
