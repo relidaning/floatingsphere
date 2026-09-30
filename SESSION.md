@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-09-30 — "+" misses the kitty group; composer sits lower
+A lidaning-skills session from the phone "+" opened beside the 4-tab group rather than in it. The project wasn't the cause: the new kitty is listed before dwindle tiles it, so `moveintogroup` sometimes took its direction from that temporary spot. `kitty_group.sh` now waits (up to ~10s) for the window's geometry to hold still, then checks that it joined, and a miss goes to sphere-web's journal. It hasn't been confirmed on a real phone launch yet. The composer's bottom gap went from the 34px home-indicator inset to 18px, and to 6px with the keyboard up. Committed as `5e2a1db`. The dirty `SESSION.md` would have made claude-maxer tasks refuse to commit in this repo, so it was committed on its own (`9366d7a`), and a memory now says root `SESSION.md`/`CLAUDE.md` always get committed and pushed unless they hold something sensitive, since the repo is public.
+
 ## 2026-09-30 — Why the daily-quota minibar showed the budget used up
 Q&A only, no code changed. The red minibar was correct: 7d went from 18% at midnight to 56% (38 pp used) against maxer's 31.9 pp budget for the day ((95% target − 18%) / 2.42 days to the Thu Oct 1 10:00 reset, ceiling 49.9%), about 119% of it.
 
