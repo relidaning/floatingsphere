@@ -19,7 +19,7 @@ WEEKLY_TARGET = 95  # maxer's default, when its settings can't be read
 _own = {}  # (date, reset) -> the split computed here, so its start holds all day
 
 
-def _weekly_target():
+def weekly_target():
     try:
         with open(MAXER_SKILL) as f:
             m = re.search(r"^weekly_target:\s*(\d+(?:\.\d+)?)", f.read(), re.M)
@@ -48,7 +48,7 @@ def daily_quota(u, now):
     if q is None:
         q = _own.get(key)
     if q is None:
-        tgt = _weekly_target()
+        tgt = weekly_target()
         days_left = ((reset or now + 86400) - midnight) / 86400
         budget = max(0.0, tgt - seven) / max(days_left, 1.0)
         q = {"start": seven, "budget": round(budget, 1), "ceiling": round(min(tgt, seven + budget), 1)}

@@ -125,6 +125,11 @@ The same monitor on a phone, as a home-screen web app (the screenshot is an iPho
 - **Sessions:** a bar split by status, then a card per session with its name, status
   and time in that status, current task, running tool, model and folder, plus ■ to
   stop it. The floating **+** at the bottom right starts a new session (see below).
+- **Weekly usage:** one bar per week showing how much of the 7-day limit it used,
+  split into what each day added, with claude-maxer's weekly target as a dashed line.
+  Tap a bar to see that week's dates and each day's share. `sphere_web.py` records it
+  (`usage_history.py`, into `~/.config/floatingsphere/usage-weeks.json`), so the
+  history builds up as long as the service runs.
 - **Chat:** tap a session to open its conversation. You can type prompts into it and
   answer the choices it stops on. Swipe right, or tap ‹, to go back to the list (see below).
 
@@ -191,6 +196,7 @@ because they aren't in the transcript until they're answered.
 | `claude_new.sh`        | `+` button: pick a project and a task in rofi, open kitty     |
 | `rofi-claude-new.rasi` | rofi theme for `claude_new.sh`                                |
 | `sphere_web.py`        | HTTP server for the web view: `/`, `/api/state`, stop, new, chat |
+| `usage_history.py`     | Records each week's 7d usage for the web view's weekly chart  |
 | `session_chat.py`      | Chat backend: transcript → chat items, kitty typing, dialog parsing |
 | `web/index.html`       | The web view (canvas sphere, meters, session list, chat)      |
 | `web/make_icons.py`    | Renders the home-screen icons and favicon into `web/`         |

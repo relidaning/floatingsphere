@@ -16,8 +16,9 @@ A bare `/resume` isn't typed: the page lists the project's past conversations
 (`GET /api/resume`) and `POST /api/resume` types `/resume <id>` for the one picked.
 
 It also runs notify.Notifier, which pushes a notification to the phone (webpush) when a
-session stops on a dialog or finishes a turn. Push needs a secure context, so the same
-app is served over HTTPS on SPHERE_WEB_TLS_PORT too, with a cert the phone trusts
+session stops on a dialog or finishes a turn, and usage_history.Recorder, which keeps
+each week's 7d usage for the page's weekly chart (`GET /api/weeks`).
+Push needs a secure context, so the same app is served over HTTPS on SPHERE_WEB_TLS_PORT too, with a cert the phone trusts
 (TLS_CERT / TLS_KEY, a copy of besmart's mkcert cert); the 🔔 in the page subscribes.
 
 Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT / SPHERE_WEB_TLS_PORT
@@ -41,7 +42,8 @@ import session_chat  # noqa: E402
 import slash_commands  # noqa: E402
 import notify  # noqa: E402
 import webpush  # noqa: E402
-from quota import daily_quota  # noqa: E402
+from quota import daily_quota, weekly_target  # noqa: E402
+import usage_history  # noqa: E402
 
 HOST = os.environ.get("SPHERE_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SPHERE_WEB_PORT", "8765"))
@@ -332,6 +334,8 @@ class Handler(BaseHTTPRequestHandler):
             # The open app says which push subscription it is, so that device isn't notified meanwhile.
             webpush.set_active(self.headers.get("X-Push-Endpoint"))
             self._send(200, "application/json", state_json())
+        elif path == "/api/weeks":
+            self._send(200, "application/json", json.dumps(usage_history.weeks_json(weekly_target())).encode())
         elif path in ("/api/chat", "/api/screen", "/api/commands", "/api/resume"):
             q = parse_qs(query)
             target = (q.get("id") or [""])[0]
@@ -547,6 +551,7 @@ if __name__ == "__main__":
     else:
         print(f"no {TLS_CERT}: HTTPS (and so push notifications) off", flush=True)
     notify.Notifier().start()
+    usage_history.Recorder(read_usage).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
