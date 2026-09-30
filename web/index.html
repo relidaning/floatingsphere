@@ -727,10 +727,12 @@ $("go").addEventListener("click", async () => {
                             flags: {skip_permissions: $("f-skip").checked, rc: $("f-rc").checked}})});
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-    toast(`started claude in ${picked}`, true);
     $("prompt").value = "";
+    // The server waited for claude to register, so step straight into the new session.
+    // (Opened before closing the sheet, so an update's reload there reopens it from #<id>.)
+    if (j.id) { poll(); openChat(j.id); }
+    else { toast(`started claude in ${picked}`, true); setTimeout(poll, 2500); }
     closeSheet();
-    setTimeout(poll, 2500);  // give claude time to register its session file
   } catch (err) {
     toast(`couldn't start: ${err.message}`);
   } finally {

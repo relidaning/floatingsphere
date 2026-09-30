@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from claude_sessions import _starttime, collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
+from claude_sessions import _has_ancestor, _starttime, collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
 import session_chat  # noqa: E402
 import slash_commands  # noqa: E402
 import notify  # noqa: E402
@@ -77,6 +77,7 @@ PROMPT_MAX = 4000
 CHAT_PROMPT_MAX = 20000
 STEPS_MAX = 24
 RESUME_WAIT_S = 8
+NEW_WAIT_S = 20  # a new claude registers its session a few seconds after kitty opens
 CLEAR_RE = re.compile(r"/(clear|new|reset)\s*$")  # /clear and its aliases
 # The client picks flags by these keys; it never sends argv text.
 CLAUDE_JSON = os.path.expanduser("~/.claude.json")
@@ -242,10 +243,13 @@ def trust_project(path):
 
 
 def start_session(project, flags, prompt):
-    """Open kitty on the desktop running claude in PROJECTS_ROOT/<project>, like claude_new.sh."""
+    """Open kitty on the desktop running claude in PROJECTS_ROOT/<project>, like claude_new.sh.
+
+    Returns (error, unit): the transient systemd unit the kitty runs in, for new_session_id().
+    """
     # Only a name from the listing is accepted, so the client can't point it anywhere else.
     if project not in {p["name"] for p in list_projects()}:
-        return "no such project"
+        return "no such project", None
     path = os.path.join(os.path.abspath(PROJECTS_ROOT), project)
     trust_project(path)
     argv = [FLAGS[k] for k in FLAGS if flags.get(k)]
@@ -268,12 +272,35 @@ def start_session(project, flags, prompt):
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired) as e:
-        return f"launch failed: {e}"
+        return f"launch failed: {e}", None
     if r.returncode:
-        return "launch failed: " + (r.stderr.strip().splitlines() or ["?"])[-1]
+        return "launch failed: " + (r.stderr.strip().splitlines() or ["?"])[-1], None
     for line in r.stderr.strip().splitlines():
         print("new:", project, line, flush=True)  # kitty_group.sh: why it didn't join the group
     record_recent(path)
+    return None, unit
+
+
+def new_session_id(unit):
+    """The id of the session the kitty in `unit` runs, once claude has registered it, or None.
+
+    kitty moves its children into a scope of their own, so they're matched by ancestry
+    to the kitty (the unit's main process), not by cgroup.
+    """
+    try:
+        kitty = int(subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", unit],
+                                   capture_output=True, text=True, timeout=5).stdout.strip() or 0)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    if kitty <= 1:
+        return None
+
+    deadline = time.time() + NEW_WAIT_S
+    while time.time() < deadline:
+        for s in live_sessions():
+            if s["session_id"] and any(_has_ancestor(p, {kitty}) for p in s["pids"]):
+                return session_key(s)
+        time.sleep(0.3)
     return None
 
 
@@ -395,12 +422,14 @@ class Handler(BaseHTTPRequestHandler):
         project, flags, prompt = body.get("project"), body.get("flags") or {}, body.get("prompt") or ""
         if not isinstance(project, str) or not isinstance(flags, dict) or not isinstance(prompt, str):
             return self._send(400, "text/plain", b"bad request")
-        err = start_session(project, flags, prompt.strip()[:PROMPT_MAX])
+        err, unit = start_session(project, flags, prompt.strip()[:PROMPT_MAX])
         if err:
             return self._send(404 if err == "no such project" else 500, "application/json",
                               json.dumps({"ok": False, "error": err}).encode())
+        # Wait for it to register, so the page can open its chat straight away.
+        sid = new_session_id(unit)
         _cache["at"] = 0.0
-        self._send(200, "application/json", b'{"ok": true}')
+        self._send(200, "application/json", json.dumps({"ok": True, "id": sid}).encode())
 
     def _type(self, path, s, body):
         """Type into the session's terminal: a prompt (/api/send) or dialog keys (/api/keys)."""
