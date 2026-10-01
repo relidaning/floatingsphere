@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-01 — Optimization PRs #1–#4 rebuilt as one mergeable PR (#5)
+Unattended claude-maxer optimize visit; nothing changed on `master`. The four earlier optimization PRs were still open and #1 and #4 no longer merged, so instead of a new fix they were cherry-picked onto current `master` with conflicts resolved (`CLAUDE.md`, `web/index.html`) and re-measured as PR #5 (`opt/floatingsphere-20261001-2241`): cairo renderer forced for the sphere and popup, 1 fps when the water is flat, a 64 KB tail for `last_reply`, one log line per failed TLS handshake, and a web frame loop that stops under an open chat. #5 supersedes #1–#4, which were left open for the user to close. Two minor risks were reported only: an unreadable `usage-weeks.json` gets overwritten, and a push that fails on a network error isn't retried.
+
 ## 2026-09-30 — Weekly usage chart in the web app (year board of weeks)
 The Tasks.md item "achievement for using over 95% of the 7-day allowance" became a chart instead: the user wanted no usage notification, and wanted it inside the web app rather than as a published page. `usage_history.py`'s `Recorder` thread in `sphere_web` saves each 7-day window to `~/.config/floatingsphere/usage-weeks.json` (backfilled only to Sep 24 from maxer's log; an early reset like 09-28's 99% → 0% starts a new period), served by `GET /api/weeks` (`445770f`). The first chart, a bar per week split into what each day added, wasn't readable (the gaps looked like day boundaries, so the user expected 7), so it was replaced by a GitHub-style board of the last 52 weeks, one amber-shaded cell per week (`866138a`, pushed); checked in a headless browser at phone and desktop widths, not on the iPhone. The Tasks.md item itself was left unchecked.
 
