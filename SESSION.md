@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-09-30 — Weekly usage chart in the web app (year board of weeks)
+The Tasks.md item "achievement for using over 95% of the 7-day allowance" became a chart instead: the user wanted no usage notification, and wanted it inside the web app rather than as a published page. `usage_history.py`'s `Recorder` thread in `sphere_web` saves each 7-day window to `~/.config/floatingsphere/usage-weeks.json` (backfilled only to Sep 24 from maxer's log; an early reset like 09-28's 99% → 0% starts a new period), served by `GET /api/weeks` (`445770f`). The first chart, a bar per week split into what each day added, wasn't readable (the gaps looked like day boundaries, so the user expected 7), so it was replaced by a GitHub-style board of the last 52 weeks, one amber-shaded cell per week (`866138a`, pushed); checked in a headless browser at phone and desktop widths, not on the iPhone. The Tasks.md item itself was left unchecked.
+
 ## 2026-09-30 — Voice control idea, discussed and dropped
 Discussion only, no code changed. The recommended design was a mic button in the phone composer: audio goes to `sphere-web`, local faster-whisper transcribes it on the laptop's RTX 3050 (4 GB) in its own on-demand process, and the text lands in the composer for review, never sent straight to Claude or used to pick dialog options. Voice-answering dialogs and desktop push-to-talk were advised against. The user then said to forget it, so nothing was built.
 
