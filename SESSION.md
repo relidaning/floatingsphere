@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-01 — Task queue: Obsidian tab switching with Alt+number
+Nothing in this repo changed; the session ran the first item of the vault's `Tasks.md` queue. "alt+n" was read as Alt plus a number (like kitty's Alt+1..9 tab groups, not the letter N), so the vault's `.obsidian/hotkeys.json` now binds Alt+1..8 to `workspace:goto-tab-1…8` and Alt+9 to `workspace:goto-last-tab` (Obsidian has no ninth-tab command), with Ctrl+1..9 kept. It was live without a restart, tested by sending Alt+1 and Alt+2 to the running window, and the task was checked off; the besmart stale-page hang and the 95% achievement item remain in the queue.
+
 ## 2026-10-01 — Optimization PRs #1–#4 rebuilt as one mergeable PR (#5)
 Unattended claude-maxer optimize visit; nothing changed on `master`. The four earlier optimization PRs were still open and #1 and #4 no longer merged, so instead of a new fix they were cherry-picked onto current `master` with conflicts resolved (`CLAUDE.md`, `web/index.html`) and re-measured as PR #5 (`opt/floatingsphere-20261001-2241`): cairo renderer forced for the sphere and popup, 1 fps when the water is flat, a 64 KB tail for `last_reply`, one log line per failed TLS handshake, and a web frame loop that stops under an open chat. #5 supersedes #1–#4, which were left open for the user to close. Two minor risks were reported only: an unreadable `usage-weeks.json` gets overwritten, and a push that fails on a network error isn't retried.
 
