@@ -24,6 +24,7 @@ Push needs a secure context, so the same app is served over HTTPS on SPHERE_WEB_
 Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT / SPHERE_WEB_TLS_PORT
      override 0.0.0.0, 8765 and 8766)
 """
+import ctypes
 import gzip
 import json
 import os
@@ -316,6 +317,20 @@ def state_json():
     return _cache["body"]
 
 
+def one_malloc_arena():
+    """Keep glibc to its main malloc arena.
+
+    Every request runs in its own thread, and glibc gives contending threads an arena
+    each (up to 8 per core). A chat opening reads and parses 512 KB+ of transcript, so
+    each arena grew to a few MB and stayed: 8 arenas, ~17 MB, after a day. The GIL
+    already serialises the allocations, so one arena costs nothing in speed.
+    """
+    try:
+        ctypes.CDLL(None).mallopt(-8, 1)  # M_ARENA_MAX
+    except (OSError, AttributeError):
+        pass  # not glibc
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "sphere_web"
     # From the phone every request crosses the sing-box/WireGuard tunnel, so a new TCP
@@ -551,6 +566,7 @@ class Server(ThreadingHTTPServer):
 if __name__ == "__main__":
     server = Server((HOST, PORT), Handler)
     print(f"sphere_web on http://{HOST}:{PORT}", flush=True)
+    one_malloc_arena()  # before any thread starts
     if os.path.exists(TLS_CERT):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(TLS_CERT, TLS_KEY)
