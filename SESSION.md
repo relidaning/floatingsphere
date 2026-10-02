@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-02 — Optimization visit: sphere-web's malloc arenas (PR #6)
+An unattended claude-maxer visit found sphere-web sitting at 51 MB after 36 h (30 MB at start): `ThreadingHTTPServer` runs a thread per connection, glibc gives concurrently allocating threads an arena each, and every arena keeps a few MB after a chat open parses its transcript (8 arenas, 24 MB in the service's `smaps`); it's a plateau, not a leak, and sequential requests don't grow it. PR #6 (`opt/floatingsphere-20261002-1143`, open, not merged) calls `mallopt(M_ARENA_MAX, 1)` at startup, which in a local harness on plain HTTP took settled RSS from 48–51 MB to 33–37 MB at the same speed; the real service wasn't measured and needs a restart after merging. PR #5 now conflicts with master on one `CLAUDE.md` line (keep its "Hover" line and master's "Left-click" line) and was left as it is rather than rebuilt a sixth time.
+
 ## 2026-10-02 — "+" from another workspace left the kitty on its own
 Two besmart sessions started from the web "+" (00:04 and 08:17) sat beside the tab group on workspace 2 instead of in it, and the journal had no `kitty_group:` line for either. `kitty_group.sh` only looked for a group on the active workspace, but dotfiles `WorkSpaceRules.conf` sends every kitty to workspace 2, and both launches were made with Chrome's workspace 3 in front (the besmart app is open there), so it found no kitty and gave up without logging. It now falls back to the groups on the other workspaces, with the same order (real group first, then most recently focused). Tested with a throwaway kitty launched from workspace 3, which joined the group on workspace 2; not yet repeated from the phone. The two stray besmart windows were left where they are.
 
