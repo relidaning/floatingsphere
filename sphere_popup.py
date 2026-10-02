@@ -23,6 +23,11 @@ import sys
 
 import gi
 
+# A short-lived list of labels: the GL renderer only adds its driver load (~50 ms, ~95 MB
+# RSS) to every click. Set outright, since the Hyprland config exports GSK_RENDERER=ngl
+# to every app; FLOATINGSPHERE_GSK_RENDERER picks another one, as for the sphere.
+os.environ["GSK_RENDERER"] = os.environ.get("FLOATINGSPHERE_GSK_RENDERER", "cairo")
+
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk, Gdk, GLib, Gio  # noqa: E402
 
