@@ -235,8 +235,17 @@ _no_window = {}  # tuple(pids) -> when it was last looked for and not found
 NO_WINDOW_RETRY_S = 20  # headless runs never get one; don't re-list kitty every poll
 
 
+def _forget_dead():
+    """Drop entries for sessions that have exited: the service runs for weeks, and a
+    reused pid must not inherit a dead session's window (text would go to the wrong one)."""
+    for cache in (_windows, _no_window):
+        for key in [k for k in cache if not any(os.path.isdir(f"/proc/{p}") for p in k)]:
+            del cache[key]
+
+
 def find_window(pids):
     """(kitty socket, window id) of the terminal a session runs in, or None."""
+    _forget_dead()
     key = tuple(sorted(pids))
     if key in _windows:
         return _windows[key]

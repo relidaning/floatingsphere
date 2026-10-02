@@ -29,6 +29,7 @@ import webpush
 POLL_S = 1          # a registry scan is ~0.1 ms
 SETTLE_S = 3
 DETAIL_MAX = 180    # the lock screen shows about three lines
+REPLY_TAIL = 64 * 1024  # the last reply is at the very end; read_chat's chat-opening tail is 512 KB+
 
 
 def _sid(s):
@@ -57,8 +58,16 @@ def last_reply(s):
     if not s["session_id"]:
         return ""
     path = session_chat.transcript_path(s["cwd"], s["session_id"])
-    items = session_chat.read_chat(path)["items"] if path else []
-    return next((it["text"] for it in reversed(items) if it["k"] == "text"), "")
+    try:
+        size = os.path.getsize(path) if path else 0
+    except OSError:
+        return ""
+    for read in (lambda: session_chat._read_items(path, max(0, size - REPLY_TAIL), size, True),
+                 lambda: session_chat.read_chat(path)):
+        text = next((it["text"] for it in reversed(read()["items"]) if it["k"] == "text"), "")
+        if text or size <= REPLY_TAIL:
+            return text
+    return ""
 
 
 def waiting_notice(s):
