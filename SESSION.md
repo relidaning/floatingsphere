@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-02 — "+" from another workspace left the kitty on its own
+Two besmart sessions started from the web "+" (00:04 and 08:17) sat beside the tab group on workspace 2 instead of in it, and the journal had no `kitty_group:` line for either. `kitty_group.sh` only looked for a group on the active workspace, but dotfiles `WorkSpaceRules.conf` sends every kitty to workspace 2, and both launches were made with Chrome's workspace 3 in front (the besmart app is open there), so it found no kitty and gave up without logging. It now falls back to the groups on the other workspaces, with the same order (real group first, then most recently focused). Tested with a throwaway kitty launched from workspace 3, which joined the group on workspace 2; not yet repeated from the phone. The two stray besmart windows were left where they are.
+
 ## 2026-10-01 — Task queue: Obsidian tab switching with Alt+number
 Nothing in this repo changed; the session ran the first item of the vault's `Tasks.md` queue. "alt+n" was read as Alt plus a number (like kitty's Alt+1..9 tab groups, not the letter N), so the vault's `.obsidian/hotkeys.json` now binds Alt+1..8 to `workspace:goto-tab-1…8` and Alt+9 to `workspace:goto-last-tab` (Obsidian has no ninth-tab command), with Ctrl+1..9 kept. It was live without a restart, tested by sending Alt+1 and Alt+2 to the running window, and the task was checked off; the besmart stale-page hang and the 95% achievement item remain in the queue.
 
