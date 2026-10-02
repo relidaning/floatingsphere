@@ -911,6 +911,7 @@ function sphereTargets() {
   return [Math.max(0, Math.min(1, (five || 0) / 100)), color];
 }
 
+// Returns whether the next frame would differ (ripple or easing), beyond the slow ticks.
 function drawSphere() {
   const dpr = window.devicePixelRatio || 1, css = 220;
   if (cv.width !== css * dpr) { cv.width = cv.height = css * dpr; }
@@ -996,14 +997,29 @@ function drawSphere() {
   c.textAlign = "center"; c.textBaseline = "middle";
   c.fillStyle = "rgba(0,0,0,0.45)"; c.fillText(n, cx + 2, cy + 3);
   c.fillStyle = "rgba(255,255,255,0.96)"; c.fillText(n, cx, cy + 1);
+  return amp > 0 || Math.abs(lvl - anim.level) > 1e-3 || anim.color.some((v, i) => Math.abs(col[i] - v) > 2e-3);
 }
 
-// ~30 fps is plenty for a ripple; the browser pauses rAF in a hidden tab.
-let lastFrame = 0;
+// ~30 fps is plenty for a ripple; the browser pauses rAF in a hidden tab. Flat, settled
+// water (an empty or full 5h window) only has its time ticks to move, so 1 fps then.
+// Nothing at all while a chat covers the sphere or it's scrolled away: wakeSphere()
+// restarts the loop when it's back or new state comes in.
+let lastFrame = 0, sphereMoving = true, sphereOnScreen = true;
+let frameTimer = null;  // null: a frame is requested; else the loop waits on a timer or is stopped
 function frame(ts) {
-  if (ts - lastFrame > 33) { lastFrame = ts; drawSphere(); }
+  frameTimer = null;
+  if (!sphereOnScreen || document.body.classList.contains("chatting")) { frameTimer = 0; return; }
+  if (ts - lastFrame > 33) { lastFrame = ts; sphereMoving = drawSphere(); }
+  if (sphereMoving) requestAnimationFrame(frame);
+  else frameTimer = setTimeout(() => { frameTimer = null; requestAnimationFrame(frame); }, 1000);
+}
+function wakeSphere() {
+  if (frameTimer === null) return;
+  clearTimeout(frameTimer); frameTimer = null;
+  sphereMoving = true;
   requestAnimationFrame(frame);
 }
+new IntersectionObserver(es => { sphereOnScreen = es[es.length - 1].isIntersecting; wakeSphere(); }).observe(cv);
 requestAnimationFrame(frame);
 
 function apply(s) {
@@ -1013,6 +1029,7 @@ function apply(s) {
   render();
   renderSessions(state.sessions || []);
   loadWeeks();
+  wakeSphere();
   if (PAGE_V && state.v > PAGE_V) { updateReady = true; maybeReload(); }
 }
 
@@ -1267,6 +1284,7 @@ function closeChat() {
   closeDialog();
   if (document.body.classList.contains("resuming")) closeResume();
   lockPage(false);
+  wakeSphere();
   $("chat").style.transform = "";
   document.activeElement?.blur();
   maybeReload();

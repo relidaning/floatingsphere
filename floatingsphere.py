@@ -27,8 +27,10 @@ import time
 import gi
 
 # The sphere is a 75px cairo drawing: GTK's GPU renderer (GL/Vulkan) costs more per
-# frame than it saves here (upload + driver threads), so default to software.
-os.environ.setdefault("GSK_RENDERER", "cairo")
+# frame than it saves here (upload + driver threads), so use software. Not setdefault:
+# the Hyprland config exports GSK_RENDERER=ngl for every app, which would win.
+# FLOATINGSPHERE_GSK_RENDERER picks another one for this app alone.
+os.environ["GSK_RENDERER"] = os.environ.get("FLOATINGSPHERE_GSK_RENDERER", "cairo")
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -48,6 +50,7 @@ MARGIN_RIGHT = 12     # distance from the right screen edge
 RING_WIDTH = 5
 FPS = 24              # while something eases in or the hover card is open
 IDLE_FPS = 8          # at rest only the ripple moves; it doesn't need more
+STILL_FPS = 1         # no ripple either (empty or full water): only the slow ticks move
 POLL_S = 2.0          # session / snapshot poll interval
 STALE_S = 40 * 60     # snapshot older than this is shown dimmed
 HOVER_OPEN_MS = 250   # hover this long before the card opens
@@ -135,6 +138,9 @@ class Sphere(Gtk.DrawingArea):
         self.color = [c + (t - c) * 0.1 for c, t in zip(self.color, color)]
         return abs(level - self.level) > 0.002 or any(abs(t - c) > 0.004 for c, t in zip(self.color, color))
 
+    def rippling(self):
+        return 0.01 < self.level < 0.99
+
     def draw(self, _area, cr, w, h):
         u = self.state.usage or {}
         now = time.time()
@@ -188,7 +194,7 @@ class Sphere(Gtk.DrawingArea):
 
         # water: two phase-shifted waves
         top = cy + r - 2 * r * self.level
-        amp = 1.5 if 0.01 < self.level < 0.99 else 0.0
+        amp = 1.5 if self.rippling() else 0.0
         for layer, (speed, alpha, phase) in enumerate(((1.6, 0.45, 0.0), (1.1, 0.9, 2.0))):
             cr.move_to(cx - r, cy + r)
             x = cx - r
@@ -315,7 +321,7 @@ class App(Gtk.Application):
         self.state.poll()
         self.sphere.level, self.sphere.color = self.sphere.targets()[0], list(self.sphere.targets()[1])
         GLib.timeout_add(int(POLL_S * 1000), self.on_poll)
-        self.fps = None
+        self.fps = self.frame_src = None
         self.schedule_frames(FPS)
         win.present()
 
@@ -370,6 +376,8 @@ class App(Gtk.Application):
         self.hover_timer = None
         self.card.restart()
         self.popover.popup()
+        if self.fps != FPS:  # don't wait up to a second for the next still frame
+            self.schedule_frames(FPS)
         return False
 
     def hide_card(self):
@@ -383,8 +391,10 @@ class App(Gtk.Application):
         return True
 
     def schedule_frames(self, fps):
+        if self.frame_src is not None:
+            GLib.source_remove(self.frame_src)
         self.fps = fps
-        GLib.timeout_add(1000 // fps, self.on_frame)
+        self.frame_src = GLib.timeout_add(1000 // fps, self.on_frame)
 
     def on_frame(self):
         moving = self.sphere.step()
@@ -392,8 +402,9 @@ class App(Gtk.Application):
         card_open = self.popover.get_visible()
         if card_open:
             self.card.queue_draw()
-        fps = FPS if moving or card_open else IDLE_FPS
+        fps = FPS if moving or card_open else IDLE_FPS if self.sphere.rippling() else STILL_FPS
         if fps != self.fps:
+            self.frame_src = None  # returning False removes it
             self.schedule_frames(fps)
             return False
         return True
