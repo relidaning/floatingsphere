@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-01 — Why claude-maxer filled a whole 5h window with the weekly flag on
+A question-only session, no code changed: the 18:10–23:10 window went from 5% to 96% in 38 minutes of one maxer run (9 tasks), which moved 7d only from 1% to 7%. The weekly flag doesn't cap a 5h window; it ends a run when 7d reaches today's ceiling (13.7% that day), and a full window costs about 6pp of the week, so the run stopped on the 95% 5h target instead. Leaving room in a window for the user's own work would mean lowering maxer's 5h target, which wasn't changed.
+
 ## 2026-10-02 — Optimization visit: sphere-web's malloc arenas (PR #6)
 An unattended claude-maxer visit found sphere-web sitting at 51 MB after 36 h (30 MB at start): `ThreadingHTTPServer` runs a thread per connection, glibc gives concurrently allocating threads an arena each, and every arena keeps a few MB after a chat open parses its transcript (8 arenas, 24 MB in the service's `smaps`); it's a plateau, not a leak, and sequential requests don't grow it. PR #6 (`opt/floatingsphere-20261002-1143`, open, not merged) calls `mallopt(M_ARENA_MAX, 1)` at startup, which in a local harness on plain HTTP took settled RSS from 48–51 MB to 33–37 MB at the same speed; the real service wasn't measured and needs a restart after merging. PR #5 now conflicts with master on one `CLAUDE.md` line (keep its "Hover" line and master's "Left-click" line) and was left as it is rather than rebuilt a sixth time.
 
