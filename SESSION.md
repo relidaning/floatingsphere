@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-03 — Review of optimization PRs #1–#3: #2 and #3 merged, #1 closed
+An unattended claude-maxer review tested each PR on current master in a separate worktree and merged the two whose claims reproduced: #2 (`last_reply` reads a 64 KB tail, 104 → 3–16 ms with identical output on 48 real transcripts; a failed TLS handshake logs 1 line instead of 25; `find_window` drops dead sessions from its caches) and #3 (popup on cairo instead of NVIDIA GL: import + realize ~150 → ~95 ms, RSS 140 → 46 MB). #1 was closed as superseded by #5 (same `floatingsphere.py` change, and #1 conflicts on `CLAUDE.md`), so the sphere's own renderer fix is still not on master. Left open: sphere-web needs a restart to pick up #2, nobody has looked at the popup on screen under cairo (the window was realized but never shown), and the popup's `+` now hands `GSK_RENDERER=cairo` to the kitty it opens.
+
 ## 2026-10-01 — Why claude-maxer filled a whole 5h window with the weekly flag on
 A question-only session, no code changed: the 18:10–23:10 window went from 5% to 96% in 38 minutes of one maxer run (9 tasks), which moved 7d only from 1% to 7%. The weekly flag doesn't cap a 5h window; it ends a run when 7d reaches today's ceiling (13.7% that day), and a full window costs about 6pp of the week, so the run stopped on the 95% 5h target instead. Leaving room in a window for the user's own work would mean lowering maxer's 5h target, which wasn't changed.
 
