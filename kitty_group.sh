@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run a command that opens a kitty window (and returns right away, e.g.
 # `setsid -f kitty …` or `systemd-run … kitty …`), then move that window into
-# the kitty group on the active workspace as a new tab, like the dotfiles'
+# the kitty group on the active workspace (else another one's) as a new tab, like the dotfiles'
 # OpenTermGrouped.sh does for Super+Return.
 #
 # Every kitty is a group (dotfiles WindowRules.conf: `group set`), so a lone
@@ -9,7 +9,13 @@
 # active workspace wins over a lone kitty even when the lone one is focused:
 # a launch from the phone happens with whatever window was focused last, and
 # the tabs belong with the existing tab group. Among equals, the most recently
-# focused one wins. With no kitty there, the new one stays its own group.
+# focused one wins.
+#
+# With no kitty on the active workspace, the groups on the other workspaces are
+# taken the same way: dotfiles WorkSpaceRules.conf sends every kitty to
+# workspace 2, so a launch made with the browser in front (workspace 3) lands
+# there anyway, and used to be left on its own. With no kitty anywhere, the
+# new one stays its own group.
 #
 # Hyprland's moveintogroup only takes a direction, so the group is focused
 # before the launch: dwindle then splits the new window off it, which makes
@@ -25,9 +31,10 @@ ws=$(hyprctl activeworkspace -j 2>/dev/null | jq -r '.id // empty')
 
 # The visible member of the chosen group (a hidden one is a background tab).
 target=$(jq -r --argjson ws "${ws:-0}" '
-    [.[] | select(.class == "kitty" and .workspace.id == $ws
+    [.[] | select(.class == "kitty" and .workspace.id > 0
                   and (.grouped | length) > 0 and (.hidden | not) and (.floating | not))]
-    | sort_by([(if (.grouped | length) > 1 then 0 else 1 end), .focusHistoryID])
+    | sort_by([(if .workspace.id == $ws then 0 else 1 end),
+               (if (.grouped | length) > 1 then 0 else 1 end), .focusHistoryID])
     | .[0].address // empty' <<<"$clients")
 before=$(jq -c '[.[].address]' <<<"$clients")
 

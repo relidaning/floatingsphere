@@ -6,7 +6,7 @@
 #   1. the project directory (recently used first, then $PROJECTS_ROOT/*)
 #   2. an opening task, sent to Claude as its first prompt (Enter to skip)
 #   3. kitty running `claude --name <dir basename> "<task>"` in that project,
-#      as a tab of the kitty group on the active workspace (kitty_group.sh)
+#      as a tab of the kitty group on the active workspace, else another's (kitty_group.sh)
 #
 # Why rofi and not a GTK dialog: the popup that launches this closes itself
 # the moment "+" is clicked (before this script even runs), so there's no
