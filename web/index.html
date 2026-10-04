@@ -41,8 +41,8 @@
   }
   main { max-width: 960px; margin: 0 auto; display: grid; gap: 16px; }
   @media (min-width: 760px) {
-    main { grid-template-columns: 340px 1fr; align-items: start; }
-    .left { position: sticky; top: 16px; }
+    main { grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr; align-items: start; }
+    .left { position: sticky; top: 16px; grid-row: span 2; }
   }
   .card {
     background: var(--surface);
@@ -402,7 +402,7 @@
   .d-none { font-size: 12px; color: var(--ink-3); padding: 8px 2px; }
 
   /* weekly usage: a board of the last 52 weeks (usage_history.py), one cell per 7-day window */
-  @media (min-width: 760px) { #weeks { grid-column: 2; } }
+  @media (min-width: 760px) { #weeks, #sessions { grid-column: 2; } }
   .wk svg { display: block; width: 100%; overflow: visible; }
   .wk text { font: 10px "JetBrains Mono", ui-monospace, monospace; fill: var(--ink-3); }
   .wk .cell { cursor: pointer; }
@@ -440,18 +440,18 @@
       <div class="meter" id="m-seven"></div>
     </section>
   </div>
-  <section class="card">
-    <div class="head"><h2>Sessions</h2><span class="end"><span class="muted" id="count"></span><button class="bell" id="bell" aria-label="Notifications" title="Notify me when a session finishes or asks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/><path class="slash" d="M4 4l16 16"/></svg></button></span></div>
-    <div id="segbar" class="segbar empty"></div>
-    <div class="dots" id="dots"></div>
-    <div class="list" id="list" style="margin-top:14px"></div>
-  </section>
   <section class="card" id="weeks">
     <div class="head"><h2>Weekly usage</h2><span class="muted" id="wk-sum"></span></div>
     <div class="wk" id="wk"><svg id="wk-svg" role="img" aria-label="7-day usage per week"></svg></div>
     <div class="wk-key" aria-hidden="true"><i style="background:rgba(255,255,255,0.05)"></i> no data<span class="gap"></span>0%
       <i style="background:#4c3f26"></i><i style="background:#7a602d"></i><i style="background:#a88234"></i><i style="background:#d1a13a"></i><i style="background:#fabf40"></i> 95%+</div>
     <div class="wk-detail" id="wk-detail" aria-live="polite"></div>
+  </section>
+  <section class="card" id="sessions">
+    <div class="head"><h2>Sessions</h2><span class="end"><span class="muted" id="count"></span><button class="bell" id="bell" aria-label="Notifications" title="Notify me when a session finishes or asks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/><path class="slash" d="M4 4l16 16"/></svg></button></span></div>
+    <div id="segbar" class="segbar empty"></div>
+    <div class="dots" id="dots"></div>
+    <div class="list" id="list" style="margin-top:14px"></div>
   </section>
 </main>
 <button class="add" id="add" aria-label="New session" title="New session">+</button>
