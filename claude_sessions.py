@@ -295,6 +295,11 @@ def collect_sessions():
             merged[key]["pids"].append(s["pid"])
         else:
             merged[key] = dict(s, pids=[s["pid"]])
+    # Sessions come and go all day (every cron run is one) and the sphere and sphere-web
+    # run for weeks, so drop the transcripts of the ones that are gone. pop(…, None):
+    # sphere-web scans from several threads, and another may have dropped it already.
+    for gone in [k for k in list(_transcript_cache) if k not in merged]:
+        _transcript_cache.pop(gone, None)
     return sorted(merged.values(), key=rank)
 
 
