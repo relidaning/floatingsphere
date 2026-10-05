@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 
+import cairo
 import gi
 
 # The sphere is a 75px cairo drawing: GTK's GPU renderer (GL/Vulkan) costs more per
@@ -53,6 +54,7 @@ IDLE_FPS = 8          # at rest only the ripple moves; it doesn't need more
 STILL_FPS = 1         # no ripple either (empty or full water): only the slow ticks move
 POLL_S = 2.0          # session / snapshot poll interval
 STALE_S = 40 * 60     # snapshot older than this is shown dimmed
+LAYER_S = 10          # the time ticks in the cached layers move this often (well under a pixel)
 HOVER_OPEN_MS = 250   # hover this long before the card opens
 WEEK_S = 7 * 24 * 3600
 FIVE_H_S = 5 * 3600
@@ -121,6 +123,7 @@ class Sphere(Gtk.DrawingArea):
         self.level = 0.0          # animated water level (0..1)
         self.color = list(GREEN)  # animated water color
         self.t0 = time.monotonic()
+        self.layer_key = self.back = self.front = None  # see draw()
 
     def targets(self):
         u = self.state.usage or {}
@@ -143,12 +146,83 @@ class Sphere(Gtk.DrawingArea):
 
     def draw(self, _area, cr, w, h):
         u = self.state.usage or {}
+        q = self.state.quota
         now = time.time()
         stale = not u or now - (u.get("cached_at") or 0) > STALE_S
+        cx, cy, _R, r = self.geometry(w, h)
+
+        # Only the water moves. What's behind it (ring, glass) and in front of it (5h
+        # ticks, outline) is kept as two images, redrawn when the data changes and every
+        # LAYER_S for the time ticks. The count is drawn each time: as an image its
+        # antialiasing came out different.
+        scale = self.layer_scale()
+        key = (w, h, scale, stale, int(now / LAYER_S), tuple(u.items()), tuple(q.items()) if q else None)
+        if key != self.layer_key:
+            self.layer_key = key
+            self.back, self.front = (self.layer(part, w, h, scale, u, q, now, stale)
+                                     for part in (self.draw_back, self.draw_front))
+        cr.set_source_surface(self.back, 0, 0)
+        cr.paint()
+
+        # water: two phase-shifted waves
+        cr.save()
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.clip()
         t = time.monotonic() - self.t0
+        top = cy + r - 2 * r * self.level
+        amp = 1.5 if self.rippling() else 0.0
+        for layer, (speed, alpha, phase) in enumerate(((1.6, 0.45, 0.0), (1.1, 0.9, 2.0))):
+            cr.move_to(cx - r, cy + r)
+            x = cx - r
+            while x <= cx + r + 1:
+                y = top + amp * math.sin((x - cx) / r * 2.2 * math.pi + t * speed + phase) + layer * 1
+                cr.line_to(x, y)
+                x += 1.5
+            cr.line_to(cx + r, cy + r)
+            cr.close_path()
+            cr.set_source_rgba(*self.color, alpha * (0.55 if stale else 1.0))
+            cr.fill()
+        cr.restore()
+
+        cr.set_source_surface(self.front, 0, 0)
+        cr.paint()
+
+        # instance count
+        text = str(self.state.instances)
+        cr.select_font_face("Sans", 0, 1)
+        cr.set_font_size(r * 0.95)
+        ext = cr.text_extents(text)
+        tx, ty = cx - ext.width / 2 - ext.x_bearing, cy - ext.height / 2 - ext.y_bearing
+        cr.set_source_rgba(0, 0, 0, 0.45)
+        cr.move_to(tx + 1, ty + 1)
+        cr.show_text(text)
+        cr.set_source_rgba(1, 1, 1, 0.96)
+        cr.move_to(tx, ty)
+        cr.show_text(text)
+
+    @staticmethod
+    def geometry(w, h):
         cx, cy = w / 2, h / 2
         R = min(w, h) / 2 - RING_WIDTH / 2 - 1
-        r = R - RING_WIDTH / 2 - 3
+        return cx, cy, R, R - RING_WIDTH / 2 - 3
+
+    def layer_scale(self):
+        """Device pixels per unit, so the cached layers are as sharp as direct drawing."""
+        native = self.get_native()
+        surface = native.get_surface() if native else None
+        if surface is None:
+            return 1.0
+        return surface.get_scale() if hasattr(surface, "get_scale") else float(surface.get_scale_factor())
+
+    @staticmethod
+    def layer(part, w, h, scale, *args):
+        img = cairo.ImageSurface(cairo.FORMAT_ARGB32, math.ceil(w * scale), math.ceil(h * scale))
+        img.set_device_scale(scale, scale)
+        part(cairo.Context(img), w, h, *args)
+        return img
+
+    def draw_back(self, cr, w, h, u, q, now, stale):
+        cx, cy, R, r = self.geometry(w, h)
 
         # 7d ring: track, used arc, week-elapsed tick
         cr.set_line_width(RING_WIDTH)
@@ -156,7 +230,6 @@ class Sphere(Gtk.DrawingArea):
         cr.arc(cx, cy, R, 0, 2 * math.pi)
         cr.stroke()
         seven = u.get("seven_pct")
-        q = self.state.quota
 
         def arc(p0, p1):
             p0, p1 = (max(0.0, min(1.0, p / 100)) for p in (p0, p1))
@@ -188,24 +261,10 @@ class Sphere(Gtk.DrawingArea):
         # glass ball
         cr.arc(cx, cy, r, 0, 2 * math.pi)
         cr.set_source_rgba(0.08, 0.09, 0.13, 0.82)
-        cr.fill_preserve()
-        cr.save()
-        cr.clip()
+        cr.fill()
 
-        # water: two phase-shifted waves
-        top = cy + r - 2 * r * self.level
-        amp = 1.5 if self.rippling() else 0.0
-        for layer, (speed, alpha, phase) in enumerate(((1.6, 0.45, 0.0), (1.1, 0.9, 2.0))):
-            cr.move_to(cx - r, cy + r)
-            x = cx - r
-            while x <= cx + r + 1:
-                y = top + amp * math.sin((x - cx) / r * 2.2 * math.pi + t * speed + phase) + layer * 1
-                cr.line_to(x, y)
-                x += 1.5
-            cr.line_to(cx + r, cy + r)
-            cr.close_path()
-            cr.set_source_rgba(*self.color, alpha * (0.55 if stale else 1.0))
-            cr.fill()
+    def draw_front(self, cr, w, h, u, _q, now, _stale):
+        cx, cy, _R, r = self.geometry(w, h)
 
         # 5h pace: short ticks on both rims at the share of the window already elapsed
         if u.get("five_reset") and u["five_reset"] > now:
@@ -213,30 +272,21 @@ class Sphere(Gtk.DrawingArea):
             if 0 <= elapsed <= 1:
                 y = cy + r - 2 * r * elapsed
                 half = math.sqrt(max(0.0, r * r - (y - cy) ** 2))
+                cr.save()
+                cr.arc(cx, cy, r, 0, 2 * math.pi)
+                cr.clip()
                 cr.set_line_width(1.5)
+                cr.set_line_cap(1)  # ROUND
                 cr.set_source_rgba(1, 1, 1, 0.85)
                 for x0, x1 in ((cx - half, cx - half + 5), (cx + half, cx + half - 5)):
                     cr.move_to(x0, y)
                     cr.line_to(x1, y)
                 cr.stroke()
-        cr.restore()
+                cr.restore()
         cr.set_line_width(1)
         cr.set_source_rgba(1, 1, 1, 0.25)
         cr.arc(cx, cy, r, 0, 2 * math.pi)
         cr.stroke()
-
-        # instance count
-        text = str(self.state.instances)
-        cr.select_font_face("Sans", 0, 1)
-        cr.set_font_size(r * 0.95)
-        ext = cr.text_extents(text)
-        tx, ty = cx - ext.width / 2 - ext.x_bearing, cy - ext.height / 2 - ext.y_bearing
-        cr.set_source_rgba(0, 0, 0, 0.45)
-        cr.move_to(tx + 1, ty + 1)
-        cr.show_text(text)
-        cr.set_source_rgba(1, 1, 1, 0.96)
-        cr.move_to(tx, ty)
-        cr.show_text(text)
 
 
 # ---------- window ----------
