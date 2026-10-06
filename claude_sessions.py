@@ -204,6 +204,18 @@ def read_transcript(cwd, session_id):
     return parsed
 
 
+def open_conversations():
+    """The sessionId of every live claude process, including the ones collect_sessions()
+    hides as stale: a terminal left idle overnight still has its conversation open."""
+    try:
+        filenames = os.listdir(SESSIONS_DIR)
+    except OSError:
+        return set()
+    infos = (_read_json(os.path.join(SESSIONS_DIR, f)) for f in filenames if f.endswith(".json"))
+    return {i["sessionId"] for i in infos
+            if i and not i.get("spare") and i.get("sessionId") and i.get("pid") and _pid_alive(i["pid"])}
+
+
 def collect_sessions():
     """Live Claude sessions, busy first, then most-recently-active."""
     now = time.time()

@@ -608,7 +608,12 @@ function renderMeter(el, title, st, mini) {
   }
 }
 
+// A card that has just moved (a cron run joining or leaving the list shifts every row) can
+// slide under a finger already on its way down, and the tap would open the wrong session.
+let listOrder = "", listMovedAt = 0;
 function renderSessions(sessions) {
+  const order = sessions.map(s => s.id).join(" ");
+  if (order !== listOrder) { if (listOrder) listMovedAt = Date.now(); listOrder = order; }
   const counts = {};
   for (const s of sessions) { const k = s.status === "agent" ? "bg" : s.status; counts[k] = (counts[k] || 0) + 1; }
   document.getElementById("count").textContent = sessions.length ? `${sessions.length} running` : "";
@@ -759,7 +764,7 @@ $("go").addEventListener("click", async () => {
     $("prompt").value = "";
     // The server waited for claude to register, so step straight into the new session.
     // (Opened before closing the sheet, so an update's reload there reopens it from #<id>.)
-    if (j.id) { poll(); openChat(j.id); }
+    if (j.id) { poll(); openChat(j.id, true, "new"); }
     else { toast(`started claude in ${picked}`, true); setTimeout(poll, 2500); }
     closeSheet();
   } catch (err) {
@@ -1211,7 +1216,7 @@ function renderChatHead() {
   $("c-why").textContent = why;
   $("c-why").classList.toggle("show", !!why);
   $("c-in").disabled = !!why;
-  $("c-in").placeholder = s.status === "busy" ? "Queue a message…" : s.status === "waiting" ? "Answer the dialog first" : "Message claude…";
+  $("c-in").placeholder = s.status === "busy" ? `Queue a message for ${s.name}…` : s.status === "waiting" ? "Answer the dialog first" : `Message ${s.name}…`;
   $("c-send").disabled = !!why || !$("c-in").value.trim() || s.status === "waiting" || chat.busy;
   tickElapsed();
 }
@@ -1221,9 +1226,11 @@ async function chatPoll() {
   const id = chat.id;
   if (!id) return;
   try {
-    const q = `api/chat?id=${encodeURIComponent(id)}` + (chat.offset != null ? `&offset=${chat.offset}` : "");
+    const why = chat.why;
+    const q = `api/chat?id=${encodeURIComponent(id)}` + (chat.offset != null ? `&offset=${chat.offset}` : "") + (why ? `&why=${why}` : "");
     const r = await fetch(q, {cache: "no-store"});
     if (id !== chat.id) return;
+    if (chat.why === why) chat.why = null;  // logged on the PC once per open
     if (r.status === 404) {
       // Cleared on the PC (or here): the same session now goes by another id.
       const moved = (await r.json().catch(() => ({}))).moved;
@@ -1249,10 +1256,15 @@ async function chatPoll() {
 
 const NEW_CONV = "Starting a new conversation…";
 const switchingHTML = what => `<div class="m-switch"><span class="ring"></span>${esc(what)}</div>`;
-function openChat(id, push = true) {
+// `why` (tap, new, follow, history, notification, reload, retry) goes to the PC's journal with
+// the first poll. Messages have landed in the wrong session because the page was on another
+// chat than the one being read, so every open is on record there, and one that takes the
+// place of another chat says so on screen.
+function openChat(id, push = true, why = "tap") {
   const s = state && state.sessions.find(x => x.id === id);
   const switching = chat.switching;
-  Object.assign(chat, {id, offset: null, s: s || (switching ? chat.s : null), ctl: false, dialog: null, dlgKey: null, hidden: null,
+  if (chat.id && chat.id !== id && !switching && why !== "tap") toast(`now in ${s ? s.name : "another session"}`, true);
+  Object.assign(chat, {id, why, offset: null, s: s || (switching ? chat.s : null), ctl: false, dialog: null, dlgKey: null, hidden: null,
                        gone: false, screen: false, tools: {}, freeRow: null, toMine: false, fromNotif: false});
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
   cList.innerHTML = switching ? switchingHTML(switching) : `<div class="m-more">loading…</div>`;
@@ -1268,7 +1280,7 @@ function followChat(id, what = NEW_CONV) {
   chat.switching = what;
   closeDialog();
   history.replaceState({chat: id}, "", "#" + encodeURIComponent(id));
-  openChat(id, false);
+  openChat(id, false, "follow");
 }
 // Pin the list page while the chat is over it, at its current scroll, and put it back after.
 let pageY = 0;
@@ -1300,7 +1312,7 @@ addEventListener("popstate", e => {
   const el = $("chat"), instant = !ownBack;
   ownBack = false;
   if (instant) el.classList.add("dragging");
-  if (e.state && e.state.chat) { if (chat.id !== e.state.chat) openChat(e.state.chat, false); }
+  if (e.state && e.state.chat) { if (chat.id !== e.state.chat) openChat(e.state.chat, false, "history"); }
   else if (chat.id) closeChat();
   if (instant) { el.offsetWidth; el.classList.remove("dragging"); }
 });
@@ -1309,7 +1321,7 @@ $("c-back").addEventListener("click", leaveChat);
 $("list").addEventListener("click", e => {
   if (e.target.closest(".stop")) return;
   const card = e.target.closest(".sess");
-  if (card && card.dataset.id) openChat(card.dataset.id);
+  if (card && card.dataset.id && Date.now() - listMovedAt > 600) openChat(card.dataset.id);
 });
 
 // ---- composer ----
@@ -1440,7 +1452,7 @@ async function sendPrompt() {
     else { cList.scrollTop = cList.scrollHeight; setTimeout(chatPoll, 700); }
   } catch (err) {
     toast(`not sent: ${err.message}`);
-    if (clearing && chat.id === from) openChat(from, false);
+    if (clearing && chat.id === from) openChat(from, false, "retry");
   }
   finally { chat.busy = false; renderChatHead(); }
 }
@@ -1754,9 +1766,11 @@ async function takePending() {
 }
 function openFromNotification(id) {
   if (chat.id !== id) {
+    // A half-written message stays with the chat it was written in.
+    if (chat.id && $("c-in").value.trim()) return toast("notification not opened: this chat has an unsent message");
     // From inside another chat, take its place, so back still leads to the list.
-    if (chat.id) { history.replaceState({chat: id}, "", "#" + encodeURIComponent(id)); openChat(id, false); }
-    else openChat(id);
+    if (chat.id) { history.replaceState({chat: id}, "", "#" + encodeURIComponent(id)); openChat(id, false, "notification"); }
+    else openChat(id, true, "notification");
   }
   // The #<id> cold start may have opened (and even drawn) the chat already.
   chat.toMine = chat.fromNotif = true;
@@ -1804,7 +1818,7 @@ if (location.hash.length > 1) {
   const id = decodeURIComponent(location.hash.slice(1));
   history.replaceState(null, "", location.pathname);
   history.pushState({chat: id}, "", "#" + encodeURIComponent(id));
-  openChat(id, false);
+  openChat(id, false, "reload");
 }
 </script>
 </body>

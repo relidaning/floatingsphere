@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-06 — Messages sent to the wrong session
+The user's suspicion was right: transcripts show two phone messages meant for `myall` typed into `lidaning-skills`. Server routing was verified correct, so the page was on the wrong chat; the trigger couldn't be found without a request log. Added journal lines for every chat open (with its reason) and send, the session name in the composer, a toast when a chat is replaced, a guard on notification switches and on taps just after the list reorders, and the /resume sheet now hides conversations open in another terminal.
+
 ## 2026-10-06 — Review of optimization PR #8: merged
 Reproduced the layer-cache PR on master 117da43 before merging: the real `App` under app id `dev.floatingsphere.bench` beside the live sphere went from 13.2–14.1 to 8.9–9.5 ms CPU/s at the same 7.8 draws/s, the tight loop from 0.27 to 0.103 ms/frame, and old vs new pixels stayed within 1/255 at scale 1 and 2 over eight states (the PR's 13/255 at scale 2 did not show up); an unchanged re-poll doesn't rebuild the layers. Squash-merged as 02fd46d. Nobody has looked at the new drawing on screen, fractional scales are untested, and the sphere needs a restart to pick it up; lowering `IDLE_FPS` and a timeout on the sphere's `hyprctl` calls are still open.
 

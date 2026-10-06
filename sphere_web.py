@@ -38,7 +38,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from claude_sessions import _has_ancestor, _starttime, collect_sessions, shorten_path, stop_session, truncate  # noqa: E402
+from claude_sessions import (_has_ancestor, _starttime, collect_sessions, open_conversations,  # noqa: E402
+                             shorten_path, stop_session, truncate)
 import session_chat  # noqa: E402
 import slash_commands  # noqa: E402
 import notify  # noqa: E402
@@ -160,6 +161,22 @@ def successor(target):
 def find_session(target):
     """The live session with this id; the client only ever names one, never pids."""
     return next((s for s in live_sessions() if session_key(s) == target), None)
+
+
+def resumable(s):
+    """What the /resume sheet offers a session: its project's past conversations, minus
+    the ones open in a terminal right now. Resumed there as well, two claudes would write
+    one transcript, and the app shows them as a single session."""
+    return session_chat.list_resumable(s["cwd"], exclude=open_conversations() | {s["session_id"]})
+
+
+WHY = {"tap", "new", "follow", "history", "notification", "reload", "retry"}
+
+
+def log_chat(what, s, detail=""):
+    """Journal line for a chat open or something typed, naming the session: a message that
+    lands in the wrong session can then be traced to what put the page on that chat."""
+    print(f"chat: {what}: {s['name']} [{session_key(s)[:8]}]{' ' + detail if detail else ''}", flush=True)
 
 
 def chat_json(s, offset):
@@ -363,7 +380,7 @@ class Handler(BaseHTTPRequestHandler):
                 cmds = slash_commands.list_commands(s["cwd"])
                 return self._send(200, "application/json", json.dumps({"commands": cmds}).encode())
             if path == "/api/resume":
-                past = session_chat.list_resumable(s["cwd"], exclude={s["session_id"]})
+                past = resumable(s)
                 return self._send(200, "application/json", json.dumps({"sessions": past, "now": time.time()}).encode())
             if path == "/api/screen":
                 text = None if s["headless"] else session_chat.read_screen(s["pids"])
@@ -372,6 +389,10 @@ class Handler(BaseHTTPRequestHandler):
                 offset = int((q.get("offset") or [""])[0])
             except ValueError:
                 offset = None
+            # The page says why it opened this chat, on the first poll only.
+            why = (q.get("why") or [""])[0]
+            if why:
+                log_chat("opened", s, f"({why if why in WHY else '?'})")
             self._send(200, "application/json", json.dumps(chat_json(s, offset)).encode())
         elif path == "/api/push":
             tls = TLS_PORT if os.path.exists(TLS_CERT) else None
@@ -465,6 +486,7 @@ class Handler(BaseHTTPRequestHandler):
             if s["status"] == "waiting":
                 return self._fail(409, "it's waiting on a dialog: answer that first")
             ok = session_chat.send_prompt(s["pids"], text.strip())
+            log_chat("sent" if ok else "not sent", s, json.dumps(truncate(text.strip(), 60), ensure_ascii=False))
             if ok and CLEAR_RE.match(text.strip()):
                 return self._cleared(s)
         else:
@@ -473,6 +495,7 @@ class Handler(BaseHTTPRequestHandler):
                     or not all(isinstance(x, dict) for x in steps)):
                 return self._send(400, "text/plain", b"bad request")
             ok = session_chat.send_steps(s["pids"], steps)
+            log_chat("keys" if ok else "keys not sent", s, " ".join(str(x.get("key") or "text") for x in steps))
         if not ok:
             return self._fail(409, "no kitty window with remote control for this session")
         _cache["at"] = 0.0
@@ -499,10 +522,11 @@ class Handler(BaseHTTPRequestHandler):
         if s["status"] != "idle":
             return self._fail(409, "wait for the turn to end first")
         # Only a past conversation of this project, as listed; never free text.
-        if not isinstance(to, str) or to not in {p["id"] for p in session_chat.list_resumable(s["cwd"])}:
+        if not isinstance(to, str) or to not in {p["id"] for p in resumable(s)}:
             return self._send(404, "application/json", b'{"ok": false, "error": "no such conversation"}')
         if not session_chat.send_prompt(s["pids"], f"/resume {to}"):
             return self._fail(409, "no kitty window with remote control for this session")
+        log_chat("resumed", s, f"to {to[:8]}")
         # Wait for the registry to follow, so the chat's next poll finds the session under its new id.
         deadline = time.time() + RESUME_WAIT_S
         while time.time() < deadline and not any(x["session_id"] == to for x in collect_sessions()):
