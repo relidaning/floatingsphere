@@ -49,12 +49,13 @@ POPUP_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sphere_
 SIZE = 75             # window size in px
 MARGIN_RIGHT = 12     # distance from the right screen edge
 RING_WIDTH = 5
-FPS = 24              # while something eases in or the hover card is open
+FPS = 24              # while something eases in, on the sphere or on the hover card
 IDLE_FPS = 8          # at rest only the ripple moves; it doesn't need more
 STILL_FPS = 1         # no ripple either (empty or full water): only the slow ticks move
 POLL_S = 2.0          # session / snapshot poll interval
 STALE_S = 40 * 60     # snapshot older than this is shown dimmed
 LAYER_S = 10          # the time ticks in the cached layers move this often (well under a pixel)
+CARD_S = 1.0          # a settled hover card is redrawn this often (its texts change by the minute)
 HOVER_OPEN_MS = 250   # hover this long before the card opens
 WEEK_S = 7 * 24 * 3600
 FIVE_H_S = 5 * 3600
@@ -354,6 +355,7 @@ class App(Gtk.Application):
         win.connect("notify::is-active", self.on_active)
 
         self.card = HoverCard(self.state)
+        self.card_drawn = 0.0
         self.popover = Gtk.Popover(child=self.card, autohide=False, has_arrow=False,
                                    position=Gtk.PositionType.LEFT)
         self.popover.add_css_class("fs-card")
@@ -449,10 +451,16 @@ class App(Gtk.Application):
     def on_frame(self):
         moving = self.sphere.step()
         self.sphere.queue_draw()
+        # The card stays open for as long as the pointer rests on the sphere. Once its
+        # bars have eased in it only needs the odd redraw: that one picks up new data,
+        # and a value that moved sets `animating` again.
         card_open = self.popover.get_visible()
-        if card_open:
+        card_moving = card_open and self.card.animating
+        now = time.monotonic()
+        if card_moving or (card_open and now - self.card_drawn >= CARD_S - 0.05):  # timer jitter
+            self.card_drawn = now
             self.card.queue_draw()
-        fps = FPS if moving or card_open else IDLE_FPS if self.sphere.rippling() else STILL_FPS
+        fps = FPS if moving or card_moving else IDLE_FPS if self.sphere.rippling() else STILL_FPS
         if fps != self.fps:
             self.frame_src = None  # returning False removes it
             self.schedule_frames(fps)

@@ -7,7 +7,8 @@
 
 Everything animates: bars sweep in from zero when the card opens (rows staggered),
 then glide to new values as the data changes; the card fades in, and busy/waiting
-legend dots pulse.
+legend dots pulse. `animating` says whether any of that is still moving, so the app can
+stop redrawing a card that has settled (a pointer left resting on the sphere keeps it open).
 """
 import math
 import time
@@ -45,6 +46,7 @@ WEEK_S = 7 * 24 * 3600
 STAGGER_S = 0.09
 EASE = 0.16      # per-frame approach factor for animated values
 FADE_S = 0.18
+SETTLE_S = 1.0   # every stagger delay and fade-in is over by then
 
 
 def _fmt_left(seconds):
@@ -83,11 +85,13 @@ class HoverCard(Gtk.DrawingArea):
         self.set_draw_func(self.draw)
         self.opened_at = 0.0
         self.shown = {}  # animated values, keyed by name
+        self.animating = True  # set by draw(): something will look different next frame
 
     def restart(self):
         """Called when the card opens: sweep every value in from zero."""
         self.opened_at = time.monotonic()
         self.shown = {}
+        self.animating = True
 
     def _anim(self, key, target, delay=0.0):
         """Advance one animated value toward target (after a stagger delay) and return it."""
@@ -97,6 +101,8 @@ class HoverCard(Gtk.DrawingArea):
             if abs(target - cur) < 0.05:
                 cur = target
         self.shown[key] = cur
+        if cur != target:
+            self._moving = True
         return cur
 
     def _since(self, delay):
@@ -233,6 +239,8 @@ class HoverCard(Gtk.DrawingArea):
                 continue
             color, label = STATUS[k]
             pulse = 0.5 + 0.5 * math.sin(t * 4) if k in ("busy", "waiting") else 1.0
+            if k in ("busy", "waiting"):
+                self._moving = True
             cr.set_source_rgba(*color, fade * (0.45 + 0.55 * pulse))
             cr.arc(lx + 4, ly + 7, 3.5 + (0.8 * pulse if k in ("busy", "waiting") else 0), 0, 2 * math.pi)
             cr.fill()
@@ -242,6 +250,7 @@ class HoverCard(Gtk.DrawingArea):
     def draw(self, _area, cr, w, h):
         u = self.state.usage or {}
         now = time.time()
+        self._moving = self._since(0) < SETTLE_S
         self.set_opacity(min(1.0, self._since(0) / FADE_S))
 
         self._text(cr, PAD, 0, "Claude usage", 13, INK, bold=True)
@@ -257,3 +266,4 @@ class HoverCard(Gtk.DrawingArea):
         self._meter(cr, 30, "five", "5-hour window", five, 0.0, now, mini=quota)
         self._meter(cr, 92, "seven", "7-day", seven, STAGGER_S, now)
         self._sessions(cr, 154, 2 * STAGGER_S)
+        self.animating = self._moving
