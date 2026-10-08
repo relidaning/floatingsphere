@@ -26,6 +26,16 @@
 
 set -uo pipefail
 
+# A service started at login (sphere-web) can predate Hyprland's instance signature in
+# the systemd user environment, or keep that of a Hyprland that has since exited. Every
+# hyprctl below then fails and the new kitty is left on its own, so take the running
+# instance's (the newest, should there be several). Without Hyprland, just launch.
+if ! hyprctl version >/dev/null 2>&1; then
+    sig=$(hyprctl instances -j 2>/dev/null | jq -r 'max_by(.time).instance // empty' 2>/dev/null)
+    [ -n "$sig" ] || exec "$@"
+    export HYPRLAND_INSTANCE_SIGNATURE=$sig
+fi
+
 clients=$(hyprctl clients -j 2>/dev/null) || clients='[]'
 ws=$(hyprctl activeworkspace -j 2>/dev/null | jq -r '.id // empty')
 
