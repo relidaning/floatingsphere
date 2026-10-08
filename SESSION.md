@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-08 — Optimization visit: phone launches join the kitty group after a boot
+Both processes were already cheap (sphere-web 95 s CPU in 50 h, 26 MB; the sphere 1.3% on pre-#8 code), so this visit went after a failure in the journal instead: on 2026-10-06 all three phone `+` launches logged `jq: parse error: Invalid numeric literal at line 1, column 28`. That is hyprctl's "HYPRLAND_INSTANCE_SIGNATURE not set!" piped into jq: sphere-web had started at boot (14:18 the day before) ahead of Hyprland's environment import, so `kitty_group.sh` found no group and left each new kitty on its own until the service was restarted at 08:34. `kitty_group.sh` now checks that `hyprctl` answers and otherwise takes the newest instance from `hyprctl instances` (which needs no signature), or just launches when there is no Hyprland. Checked on the script's read-only first half with the signature unset, stale, correct, and with no Hyprland; no real launch was made, since that opens a kitty on the desktop. sphere-web needs no restart: the script is read on each launch.
+
 ## 2026-10-06 — Messages sent to the wrong session
 The user's suspicion was right: transcripts show two phone messages meant for `myall` typed into `lidaning-skills`. Server routing was verified correct, so the page was on the wrong chat; the trigger couldn't be found without a request log. Added journal lines for every chat open (with its reason) and send, the session name in the composer, a toast when a chat is replaced, a guard on notification switches and on taps just after the list reorders, and the /resume sheet now hides conversations open in another terminal.
 
