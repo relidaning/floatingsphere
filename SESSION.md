@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-11 — Optimization visit: nothing new to fix, no PR
+An unattended claude-maxer visit measured both processes and changed nothing: sphere-web is quiet (2 CPU ticks in 20 s, 0.05% lifetime, 25.8 MB RSS, no journal errors since 10-06), and the sphere's 19 ticks in 20 s at rest (1.9% lifetime) come from a process started 2026-10-05, before #8 and #10 were merged, so the one step that lowers its cost is a restart, which the run must not do. The worktree and branch `opt/floatingsphere-20261011-0315` were created and removed without edits; still open as the user's decisions are `IDLE_FPS` 8 → 6 or 5, the pulsing dot on an open hover card, a timeout on the sphere's `hyprctl` calls, one retry for a push that fails on a network error, and moving an unreadable `usage-weeks.json` aside instead of overwriting it.
+
 ## 2026-10-09 — Review of optimization PR #10: merged
 An unattended claude-maxer review ran the real `App` under app id `dev.floatingsphere.bench` with the hover card held open and sessions forced to idle, master 1309792 against the merged tree, three alternating 8 s runs each: 68.4 / 64.3 / 55.6 → 9.2 / 8.1 / 8.0 ms CPU/s, card draws 24 → 1 per second; a settled card still glided within 0.25 s of a 5h change, started the pulse within 1 s of a session turning busy, and swept in from zero on reopen, and the busy case was unchanged as intended (55.6 → 54.2 ms/s). Squash-merged as 03b90db. Not exercised: nobody looked at the card on screen, and the running sphere needs a restart to pick up #10 (and #8); the local `opt/floatingsphere-20261009-0642` branch needs `git branch -D` (squash merge), and the review worktree `floatingsphere-review-20261009-0649` can be removed.
 
