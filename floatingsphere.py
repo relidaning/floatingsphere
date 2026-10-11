@@ -55,6 +55,8 @@ STILL_FPS = 1         # no ripple either (empty or full water): only the slow ti
 POLL_S = 2.0          # session / snapshot poll interval
 STALE_S = 40 * 60     # snapshot older than this is shown dimmed
 LAYER_S = 10          # the time ticks in the cached layers move this often (well under a pixel)
+STARTUP_HYPRCTL_S = 10  # the window rules are worth waiting for: without them the sphere opens tiled
+HYPRCTL_S = 2         # hyprctl is asked on the GTK main thread; a compositor that doesn't answer mustn't hang it
 CARD_S = 1.0          # a settled hover card is redrawn this often (its texts change by the minute)
 HOVER_OPEN_MS = 250   # hover this long before the card opens
 WEEK_S = 7 * 24 * 3600
@@ -292,12 +294,20 @@ class Sphere(Gtk.DrawingArea):
 
 # ---------- window ----------
 
+def hyprctl(*args, timeout=HYPRCTL_S):
+    """hyprctl's output, or "" when it fails or doesn't answer in time."""
+    try:
+        return subprocess.run(["hyprctl", *args], capture_output=True, text=True, timeout=timeout).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def hyprland_rules():
     """Float, pin and park the window at the right edge (runtime rules, nothing persisted)."""
     if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         return
     try:
-        mons = json.loads(subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True).stdout)
+        mons = json.loads(hyprctl("-j", "monitors", timeout=STARTUP_HYPRCTL_S))
         m = next((m for m in mons if m.get("focused")), mons[0])
         scale = m.get("scale", 1) or 1
         mw, mh = m["width"] / scale, m["height"] / scale
@@ -310,7 +320,7 @@ def hyprland_rules():
     if x is not None:
         rules.append(f"move {x} {y}")
     batch = ";".join(f"keyword windowrulev2 {r}, {sel}" for r in rules)
-    subprocess.run(["hyprctl", "--batch", batch], capture_output=True)
+    hyprctl("--batch", batch, timeout=STARTUP_HYPRCTL_S)
 
 
 CSS = b"""
@@ -329,6 +339,7 @@ class App(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID)
         self.state = State()
+        self.poll_error = None
 
     def do_activate(self):
         if self.get_windows():
@@ -370,7 +381,7 @@ class App(Gtk.Application):
         click.connect("pressed", self.on_click)
         self.sphere.add_controller(click)
 
-        self.state.poll()
+        self.on_poll()
         self.sphere.level, self.sphere.color = self.sphere.targets()[0], list(self.sphere.targets()[1])
         GLib.timeout_add(int(POLL_S * 1000), self.on_poll)
         self.fps = self.frame_src = None
@@ -397,8 +408,7 @@ class App(Gtk.Application):
         # A focus dispatch warps the cursor to the new window's center, which would
         # yank the pointer off the sphere; suspend warps around it.
         try:
-            warps = json.loads(subprocess.run(["hyprctl", "-j", "getoption", "cursor:no_warps"],
-                                              capture_output=True, text=True).stdout)["int"]
+            warps = json.loads(hyprctl("-j", "getoption", "cursor:no_warps"))["int"]
         except (ValueError, KeyError):
             warps = 0
         subprocess.Popen(["hyprctl", "--batch", "keyword cursor:no_warps 1; dispatch focuscurrentorlast; "
@@ -407,11 +417,8 @@ class App(Gtk.Application):
 
     def cursor_on_sphere(self):
         try:
-            cur = json.loads(subprocess.run(["hyprctl", "-j", "cursorpos"],
-                                            capture_output=True, text=True).stdout)
-            me = next(c for c in json.loads(subprocess.run(["hyprctl", "-j", "clients"],
-                                                           capture_output=True, text=True).stdout)
-                      if c.get("class") == APP_ID)
+            cur = json.loads(hyprctl("-j", "cursorpos"))
+            me = next(c for c in json.loads(hyprctl("-j", "clients")) if c.get("class") == APP_ID)
         except (ValueError, StopIteration):
             return True
         (x, y), (w, h) = me["at"], me["size"]
@@ -439,7 +446,16 @@ class App(Gtk.Application):
         self.popover.popdown()
 
     def on_poll(self):
-        self.state.poll()
+        # A callback that raises is dropped by GLib, and the sphere would go on showing
+        # the data it had, for good. The files read here are written by other programs
+        # (Claude Code's registry and transcripts, maxer's snapshot), so skip a bad poll.
+        try:
+            self.state.poll()
+            self.poll_error = None
+        except Exception as e:  # noqa: BLE001
+            if repr(e) != self.poll_error:  # once, not every POLL_S
+                self.poll_error = repr(e)
+                print(f"floatingsphere: poll failed: {e!r}", file=sys.stderr, flush=True)
         return True
 
     def schedule_frames(self, fps):
