@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-12 — Optimization visit: nothing to fix, no PR
+An unattended visit five hours after #11 measured both processes and found no new gap, so it made no worktree, branch or PR: sphere-web at 0.05% CPU and 23.7 MB after 6 days (`/api/state` 10.8 ms, `list_resumable()` 119–174 ms cold and 1–2 ms cached, `read_chat()` 12–17 ms on a 19 MB transcript), no failed push in 364 notifications over 30 days, and `_resume_cache` keeping entries for deleted transcripts at no measurable cost. The one thing that would lower cost now is still restarting the sphere, which has run since 2026-10-05 and so predates #8, #10 and #11.
+
 ## 2026-10-12 — Review of PR #11 (poll guard, hyprctl timeouts): merged
 An unattended review reproduced every claim on `master` against `master` + the PR and squash-merged it as 2502274: with a registry file holding a JSON string, `on_poll` on master ran 6 times in 1.5 s and stopped, with the PR 29 times and logged once; behind a `hyprctl` that sleeps, `cursor_on_sphere()` returns in 2.0 s and `hyprland_rules()` in 20 s (master never returned), and the real `App` under app id `dev.floatingsphere.bench` came up floating and pinned where master showed no window. Two details differ from the PR text: `cursor_on_sphere()` waits 2 s, not 4 s (the first empty answer ends it), and a launch with Hyprland not answering takes 20 s (two 10 s timeouts) and comes up without its launch rules. The sphere still needs a restart to pick up #8, #10 and #11.
 
