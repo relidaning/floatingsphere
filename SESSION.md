@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-13 — Optimization visit: third in a row with nothing to fix, no PR
+An unattended visit 20 hours after the last one changed nothing and made no worktree, branch or PR: sphere-web at 2 CPU ticks in 20 s (0.05% lifetime, 22.4 MB RSS, no restarts, only `notify:` lines in the journal since the last visit), and its connection handling was checked and is already guarded (TLS handshake in the request thread, 60 s idle timeout, 10 s push timeout, notifier loop catches exceptions). The sphere's 19 ticks in 20 s still come from the 2026-10-05 process that predates #8, #10 and #11, so a restart remains the one step that lowers cost; further visits will likely find nothing until then or until the code changes.
+
 ## 2026-10-12 — Optimization visit: nothing to fix, no PR
 An unattended visit five hours after #11 measured both processes and found no new gap, so it made no worktree, branch or PR: sphere-web at 0.05% CPU and 23.7 MB after 6 days (`/api/state` 10.8 ms, `list_resumable()` 119–174 ms cold and 1–2 ms cached, `read_chat()` 12–17 ms on a 19 MB transcript), no failed push in 364 notifications over 30 days, and `_resume_cache` keeping entries for deleted transcripts at no measurable cost. The one thing that would lower cost now is still restarting the sphere, which has run since 2026-10-05 and so predates #8, #10 and #11.
 
