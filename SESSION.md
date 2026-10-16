@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-17 — Image colour question, no project work
+The session opened with two pasted images and a question about their colours, to be answered in five words. Nothing in the part of the transcript that could be read touched the code. The transcript file disappeared while these notes were being written, so the rest of the session isn't recorded here.
+
 ## 2026-10-16 — An idle terminal session no longer vanishes after a laptop sleep
 After a laptop sleep, a terminal session that was still open had dropped off the sphere, the web list and notifications, because `collect_sessions()` hid any terminal whose registry file was more than 6h old (`STALE_AFTER_S`). That cutoff is gone. Liveness is now the pid plus the registry's `procStart` matching `/proc/<pid>/stat`'s starttime (`_registered_alive()`, also used by `open_conversations()`), which rules out a reused pid without an age limit. Committed and pushed as 2dd4c14, with CLAUDE.md updated in the same commit.
 
