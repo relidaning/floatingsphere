@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-16 — An idle terminal session no longer vanishes after a laptop sleep
+After a laptop sleep, a terminal session that was still open had dropped off the sphere, the web list and notifications, because `collect_sessions()` hid any terminal whose registry file was more than 6h old (`STALE_AFTER_S`). That cutoff is gone. Liveness is now the pid plus the registry's `procStart` matching `/proc/<pid>/stat`'s starttime (`_registered_alive()`, also used by `open_conversations()`), which rules out a reused pid without an age limit. Committed and pushed as 2dd4c14, with CLAUDE.md updated in the same commit.
+
 ## 2026-10-13 — Optimization visit: third in a row with nothing to fix, no PR
 An unattended visit 20 hours after the last one changed nothing and made no worktree, branch or PR: sphere-web at 2 CPU ticks in 20 s (0.05% lifetime, 22.4 MB RSS, no restarts, only `notify:` lines in the journal since the last visit), and its connection handling was checked and is already guarded (TLS handshake in the request thread, 60 s idle timeout, 10 s push timeout, notifier loop catches exceptions). The sphere's 19 ticks in 20 s still come from the 2026-10-05 process that predates #8, #10 and #11, so a restart remains the one step that lowers cost; further visits will likely find nothing until then or until the code changes.
 
