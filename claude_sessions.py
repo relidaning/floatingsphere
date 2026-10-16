@@ -38,7 +38,6 @@ USAGE_SNAPSHOT = os.path.expanduser("~/.claude/state/usage_snapshot.json")
 TAIL_BYTES = 256 * 1024      # transcript bytes scanned for prompt/tool
 HEAD_BYTES = 64 * 1024       # transcript bytes scanned for the opening prompt
 TASK_MAXLEN = 96
-STALE_AFTER_S = 6 * 3600     # ignore session files this old even if pid lives
 
 # Claude Code re-fetches rate limits roughly every 30s, so a snapshot a couple
 # of refreshes old is still normal; past that it is worth saying out loud that
@@ -64,6 +63,16 @@ def _read_json(path):
 
 def _pid_alive(pid):
     return os.path.isdir(f"/proc/{pid}")
+
+
+def _registered_alive(info):
+    """The session file's process is still running: its pid exists and, where the
+    file records `procStart`, started when the file says (not a reused pid)."""
+    pid = info.get("pid")
+    if not pid or not _pid_alive(pid):
+        return False
+    start = info.get("procStart")
+    return not start or str(_starttime(pid)) == str(start)
 
 
 def _ppid(pid):
@@ -205,20 +214,18 @@ def read_transcript(cwd, session_id):
 
 
 def open_conversations():
-    """The sessionId of every live claude process, including the ones collect_sessions()
-    hides as stale: a terminal left idle overnight still has its conversation open."""
+    """The sessionId of every live claude process."""
     try:
         filenames = os.listdir(SESSIONS_DIR)
     except OSError:
         return set()
     infos = (_read_json(os.path.join(SESSIONS_DIR, f)) for f in filenames if f.endswith(".json"))
     return {i["sessionId"] for i in infos
-            if i and not i.get("spare") and i.get("sessionId") and i.get("pid") and _pid_alive(i["pid"])}
+            if i and not i.get("spare") and i.get("sessionId") and _registered_alive(i)}
 
 
 def collect_sessions():
     """Live Claude sessions, busy first, then most-recently-active."""
-    now = time.time()
     try:
         filenames = os.listdir(SESSIONS_DIR)
     except OSError:
@@ -235,9 +242,9 @@ def collect_sessions():
         # background job; they register a session file but aren't a session yet.
         if info.get("spare"):
             continue
-        pid = info.get("pid")
         # Session files outlive a crashed process; /proc is the ground truth.
-        if pid and _pid_alive(pid):
+        # A terminal idle for days (e.g. across a laptop sleep) is still a session.
+        if _registered_alive(info):
             live.append(info)
 
     # Terminal sessions are entrypoint "cli"; everything headless (cron jobs,
@@ -272,9 +279,6 @@ def collect_sessions():
             if status not in ("busy", "waiting"):
                 status = "idle"
             status_since = (info.get("statusUpdatedAt") or 0) / 1000
-            updated = (info.get("updatedAt") or 0) / 1000
-            if updated and now - updated > STALE_AFTER_S:
-                continue
 
         session_id = info.get("sessionId") or ""
         transcript = read_transcript(cwd, session_id) if cwd and session_id else {}
