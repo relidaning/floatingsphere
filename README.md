@@ -164,10 +164,12 @@ Type in the box and press ↑ to send the prompt. It is typed into the session's
 window on the PC, as if you typed it there. While Claude is working, a message you
 send is queued for its next turn, and **esc** interrupts it.
 
-The picture button left of the box attaches photos or screenshots (up to 6, shrunk on
-the phone first). They go to the PC and are pasted into claude as `[Image #N]`, the same
-as dropping a file on the terminal, ahead of whatever you typed. Sent pictures show in
-the conversation; tap one to see it full size.
+To attach files, copy them and paste them into the box, as in claude in a terminal (on a
+computer you can also drop them on the chat). On an iPhone that's Copy in Photos or Files,
+then Paste in the box. Up to 6 per message; large photos are shrunk first. Pictures are
+pasted into claude as `[Image #N]`. Any other file (text, PDF, logs…) is saved on the PC
+and its path goes into the message for claude to read. Sent pictures and files show in
+the conversation; tap a picture to see it full size.
 
 When the session stops on a choice, such as a permission prompt ("Do you want to
 proceed?") or a question from AskUserQuestion, a sheet pops up with the options:

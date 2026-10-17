@@ -332,18 +332,25 @@
   .c-foot .send { flex: none; width: 44px; height: 42px; border: 0; border-radius: 12px; background: var(--amber); color: #1a1406;
     font: inherit; font-size: 18px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .c-foot .send:disabled { background: rgba(255,255,255,0.08); color: var(--ink-4); cursor: default; }
-  .c-foot .att { flex: none; width: 36px; height: 42px; border: 0; border-radius: 12px; background: none; color: var(--ink-2);
-    display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; }
-  .c-foot .att:disabled { color: var(--ink-4); cursor: default; }
-  .c-foot .att svg { width: 22px; height: 22px; }
-  /* pictures picked for the next message */
+  /* files pasted or dropped for the next message */
   .c-atts { flex: none; display: none; gap: 8px; overflow-x: auto;
     padding: 8px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
   .c-atts.show { display: flex; }
   .c-atts .a { position: relative; flex: none; width: 64px; height: 64px; border-radius: 10px; overflow: hidden;
     border: 1px solid var(--line); background: rgba(0,0,0,0.35); }
   .c-atts .a img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .c-atts .a.busy img { opacity: 0.35; }
+  .c-atts .a.busy img, .c-atts .a.busy .f { opacity: 0.35; }
+  .c-atts .a .f, .m-file { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    color: var(--ink-2); font-size: 10px; text-align: center; }
+  .c-atts .a .f { width: 100%; height: 100%; padding: 4px; box-sizing: border-box; }
+  .c-atts .a .f b, .m-file b { color: var(--ink); font-weight: normal; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c-atts .a .f svg { width: 20px; height: 20px; flex: none; }
+  .m-files { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .m-files:not(:last-child) { margin-bottom: 6px; }
+  .m-file { flex-direction: row; gap: 7px; font-size: 12px; max-width: 100%; padding: 7px 11px; border-radius: 10px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--line); }
+  .m-file svg { width: 16px; height: 16px; flex: none; }
+  .chat.dropping .c-foot textarea { border-color: var(--amber); }
   .c-atts .a button { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border: 0; border-radius: 11px;
     background: rgba(0,0,0,0.65); color: #fff; font: inherit; font-size: 12px; line-height: 22px; padding: 0; cursor: pointer; }
   .m-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
@@ -526,8 +533,6 @@
   <div class="c-cmds" id="c-cmds" role="listbox" aria-label="Commands"></div>
   <div class="c-atts" id="c-atts"></div>
   <div class="c-foot">
-    <button class="att" id="c-att" aria-label="Attach pictures"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/></svg></button>
-    <input type="file" id="c-file" accept="image/*" multiple hidden>
     <textarea class="field" id="c-in" rows="1" placeholder="Message claude…" enterkeyhint="send"></textarea>
     <button class="send" id="c-send" aria-label="Send" disabled>↑</button>
   </div>
@@ -1113,9 +1118,9 @@ document.addEventListener("gesturestart", e => e.preventDefault());
 // ---- chat: tap a session to read its conversation, type into it, answer its dialogs ----
 // The transcript comes from /api/chat by byte offset; typing and keys go into the
 // session's kitty window on the PC (session_chat.py), as if typed there.
-// Pictures picked for the next message (see "pictures" below).
-const ATTS_MAX = 6, ATT_SIDE = 2000;
-let atts = [];  // {url: object URL for the thumbnail, data: base64 JPEG once shrunk}
+// Files pasted or dropped for the next message (see "attachments" below).
+const ATTS_MAX = 6, ATT_SIDE = 2000, ATT_RAW_MAX = 1.5e6, FILE_MAX = 10e6, SEND_B64_MAX = 30e6;
+let atts = [];  // {name, url: object URL of a picture's thumbnail, data: base64 once read}
 const hasDraft = () => !!$("c-in").value.trim() || atts.length > 0;
 const chat = {id: null, offset: null, s: null, ctl: false, dialog: null, dlgKey: null, hidden: null,
               timer: null, busy: false, gone: false, switching: null, screen: false, tools: {}, freeRow: null};
@@ -1158,14 +1163,20 @@ function md(src) {
   return out.join("");
 }
 
+// A file sent from the composer goes to claude as its path on the PC, one per line (save_files()).
+const UPLOADED = /^\/\S+\/floatingsphere\/uploads\/\d{8}-\d{6}-[0-9a-f]{8}\/(\S+)$/gm;
+const FILE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></svg>`;
 function itemEl(it) {
   const d = document.createElement("div");
-  if (it.k === "user" && it.imgs) {
-    // claude's "[Image #N]" placeholders stand for the pictures shown above the text
-    const text = it.text.replace(/\[Image #\d+\]\s*/g, "").trim();
+  const files = it.k === "user" ? [...it.text.matchAll(UPLOADED)].map(m => m[1]) : [];
+  if (it.k === "user" && (it.imgs || files.length)) {
+    // claude's "[Image #N]" placeholders stand for the pictures shown above the text, and
+    // the paths of files sent from here for the file chips
+    const text = it.text.replace(/\[Image #\d+\]\s*/g, "").replace(UPLOADED, "").trim();
     const q = `api/image?id=${encodeURIComponent(chat.id)}&at=${it.at}&i=`;
     d.className = "m-user pics";
-    d.innerHTML = `<div class="m-imgs">${it.imgs.map(i => `<img loading="lazy" alt="picture" src="${q}${i}">`).join("")}</div>` +
+    d.innerHTML = (it.imgs ? `<div class="m-imgs">${it.imgs.map(i => `<img loading="lazy" alt="picture" src="${q}${i}">`).join("")}</div>` : "") +
+                  (files.length ? `<div class="m-files">${files.map(n => `<span class="m-file">${FILE_ICON}<b>${esc(n)}</b></span>`).join("")}</div>` : "") +
                   (text ? `<div class="m-utext">${mdInline(text)}</div>` : "");
   }
   else if (it.k === "user") { d.className = "m-user"; d.innerHTML = mdInline(it.text); }
@@ -1256,8 +1267,7 @@ function renderChatHead() {
   $("c-in").disabled = !!why;
   $("c-in").placeholder = s.status === "busy" ? `Queue a message for ${s.name}…` : s.status === "waiting" ? "Answer the dialog first" : `Message ${s.name}…`;
   $("c-send").disabled = !!why || !hasDraft() || atts.some(a => !a.data) || s.status === "waiting" || chat.busy;
-  $("c-att").disabled = !!why || atts.length >= ATTS_MAX;
-  tickElapsed();
+    tickElapsed();
 }
 
 async function chatPoll() {
@@ -1385,54 +1395,97 @@ $("c-in").addEventListener("keydown", e => {
 });
 $("c-send").addEventListener("click", sendPrompt);
 
-// ---- pictures ----
-// Picked pictures are shrunk to JPEG here (a phone photo is 3-12 MB, claude scales anything past
-// ~1600px down anyway) and sent with the message; the PC pastes each one into claude as a file path.
+// ---- attachments ----
+// Like claude in a terminal: copy files or pictures and paste them into the box (or drop them
+// on the chat). Pictures go to claude as [Image #N]; any other file is saved on the PC and its
+// path goes into the message, for claude to Read. A photo is shrunk to JPEG here (a phone photo
+// is 3-12 MB and claude scales anything past ~1600px down anyway); a small picture such as a
+// screenshot is sent as it is, so its text stays sharp.
 function renderAtts() {
   const el = $("c-atts");
   el.classList.toggle("show", atts.length > 0);
-  el.innerHTML = atts.map((a, i) => `<div class="a${a.data ? "" : " busy"}"><img alt="" src="${a.url}"><button data-i="${i}" aria-label="Remove">✕</button></div>`).join("");
+  el.innerHTML = atts.map((a, i) => `<div class="a${a.data ? "" : " busy"}">` +
+    (a.url ? `<img alt="" src="${a.url}">` : `<div class="f">${FILE_ICON}<b>${esc(a.name)}</b></div>`) +
+    `<button data-i="${i}" aria-label="Remove">✕</button></div>`).join("");
   renderChatHead();
 }
 function clearAtts() {
-  atts.forEach(a => URL.revokeObjectURL(a.url));
+  atts.forEach(a => a.url && URL.revokeObjectURL(a.url));
   atts = []; renderAtts();
 }
-function shrink(file) {
+const readB64 = blob => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(r.result.slice(r.result.indexOf(",") + 1));
+  r.onerror = () => fail(new Error(`can't read ${blob.name || "that file"}`));
+  r.readAsDataURL(blob);
+});
+function loadImage(url) {
   return new Promise((ok, fail) => {
-    const img = new Image(), url = URL.createObjectURL(file);
-    img.onload = () => {
-      const k = Math.min(1, ATT_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      URL.revokeObjectURL(url);
-      ok(c.toDataURL("image/jpeg", 0.85));
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error("can't read that picture")); };
+    const img = new Image();
+    img.onload = () => ok(img);
+    img.onerror = () => fail(new Error("not a picture"));
     img.src = url;
   });
 }
-$("c-att").addEventListener("click", () => $("c-file").click());
-$("c-file").addEventListener("change", async e => {
-  const files = [...e.target.files].slice(0, ATTS_MAX - atts.length);
-  e.target.value = "";
+async function readAtt(a, file) {
+  if (a.url) {
+    try {
+      const img = await loadImage(a.url), side = Math.max(img.naturalWidth, img.naturalHeight);
+      if (side <= ATT_SIDE && file.size <= ATT_RAW_MAX && /^image\/(png|jpeg|gif|webp)$/.test(file.type)) return readB64(file);
+      const k = Math.min(1, ATT_SIDE / side), c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      a.name = a.name.replace(/\.\w+$/, "") + ".jpg";
+      return c.toDataURL("image/jpeg", 0.85).split(",")[1];
+    } catch (e) {  // a type this browser can't draw: send it as a plain file
+      URL.revokeObjectURL(a.url); a.url = null; renderAtts();
+    }
+  }
+  if (file.size > FILE_MAX) throw new Error(`${a.name} is over ${FILE_MAX / 1e6} MB`);
+  return readB64(file);
+}
+async function addFiles(list) {
+  if (!chat.id || $("c-in").disabled) return;
+  const files = list.slice(0, ATTS_MAX - atts.length);
+  if (files.length < list.length) toast(`up to ${ATTS_MAX} files per message`);
   const owner = chat.id;
-  const added = files.map(f => ({url: URL.createObjectURL(f), data: null}));
+  const added = files.map(f => ({name: f.name || "pasted", url: /^image\//.test(f.type) ? URL.createObjectURL(f) : null, data: null}));
   atts.push(...added); renderAtts();
   for (const [i, f] of files.entries()) {
     const a = added[i];
-    try { a.data = await shrink(f); }
-    catch (err) { toast(err.message); atts = atts.filter(x => x !== a); URL.revokeObjectURL(a.url); }
+    try {
+      a.data = await readAtt(a, f);
+      // the server takes ~32 MB of base64 per message
+      if (atts.reduce((n, x) => n + (x.data ? x.data.length : 0), 0) > SEND_B64_MAX) throw new Error(`${a.name}: too much for one message`);
+    }
+    catch (err) { toast(err.message); atts = atts.filter(x => x !== a); if (a.url) URL.revokeObjectURL(a.url); }
     if (chat.id !== owner) return;
     renderAtts();
   }
+}
+$("c-in").addEventListener("paste", e => {
+  const files = [...(e.clipboardData && e.clipboardData.files || [])];
+  if (!files.length) return;  // plain text pastes as text
+  e.preventDefault();
+  addFiles(files);
+});
+const chatEl = $("chat");
+chatEl.addEventListener("dragover", e => {
+  if (![...e.dataTransfer.types].includes("Files")) return;
+  e.preventDefault(); chatEl.classList.add("dropping");
+});
+chatEl.addEventListener("dragleave", e => { if (!chatEl.contains(e.relatedTarget)) chatEl.classList.remove("dropping"); });
+chatEl.addEventListener("drop", e => {
+  chatEl.classList.remove("dropping");
+  if (!e.dataTransfer.files.length) return;
+  e.preventDefault(); addFiles([...e.dataTransfer.files]);
 });
 $("c-atts").addEventListener("click", e => {
   const b = e.target.closest("button");
   if (!b) return;
   const [a] = atts.splice(+b.dataset.i, 1);
-  URL.revokeObjectURL(a.url); renderAtts();
+  if (a.url) URL.revokeObjectURL(a.url);
+  renderAtts();
 });
 cList.addEventListener("click", e => {
   const img = e.target.closest(".m-imgs img");
@@ -1530,16 +1583,16 @@ async function post(path, body) {
 }
 
 async function sendPrompt() {
-  const text = $("c-in").value.trim(), images = atts.map(a => a.data);
-  if (!(text || images.length) || images.some(x => !x) || !chat.id || chat.busy) return;
+  const text = $("c-in").value.trim(), files = atts.map(a => ({name: a.name, data: a.data}));
+  if (!(text || files.length) || files.some(f => !f.data) || !chat.id || chat.busy) return;
   // claude's /resume picker is a scrolling list the phone can't drive; show our own.
-  if (!images.length && /^\/resume$/.test(text)) { $("c-in").value = ""; fitInput(); renderCmds(); return openResume(); }
+  if (!files.length && /^\/resume$/.test(text)) { $("c-in").value = ""; fitInput(); renderCmds(); return openResume(); }
   // /clear starts a new conversation under a new id; the server waits for it and we follow.
-  const clearing = !images.length && /^\/(clear|new|reset)$/.test(text), from = chat.id;
+  const clearing = !files.length && /^\/(clear|new|reset)$/.test(text), from = chat.id;
   chat.busy = true; renderChatHead();
   if (clearing) { clearTimeout(chat.timer); chat.switching = NEW_CONV; cList.innerHTML = switchingHTML(NEW_CONV); }
   try {
-    const j = await post("api/send", images.length ? {id: from, text, images} : {id: from, text});
+    const j = await post("api/send", files.length ? {id: from, text, files} : {id: from, text});
     $("c-in").value = ""; fitInput(); renderCmds(); clearAtts();
     if (clearing) { if (chat.id === from) followChat(j.id || from); }
     else { cList.scrollTop = cList.scrollHeight; setTimeout(chatPoll, 700); }

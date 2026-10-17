@@ -31,6 +31,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import ssl
 import subprocess
 import sys
@@ -84,13 +85,14 @@ RECENT_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduse
 RECENT_MAX = 15
 PROMPT_MAX = 4000
 CHAT_PROMPT_MAX = 20000
-# Pictures from the composer: saved here and pasted into claude as paths.
+# Files pasted into the composer: saved here and pasted into claude as paths.
 UPLOAD_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
                           "floatingsphere", "uploads")
-UPLOAD_KEEP_S = 7 * 86400  # claude embeds the picture in the transcript; the file is only for the paste
-IMAGES_MAX = 6
+UPLOAD_KEEP_S = 7 * 86400  # claude embeds a picture in the transcript; other files are read from here
+FILES_MAX = 6
+FILE_MAX = 10 * 1024 * 1024
 POST_MAX = 16384
-SEND_POST_MAX = 24 * 1024 * 1024  # /api/send with pictures (the page shrinks them to ~0.5 MB each)
+SEND_POST_MAX = 32 * 1024 * 1024  # /api/send with files, base64 (the page shrinks photos to ~0.5 MB each)
 # What claude accepts, told apart by the bytes themselves, never by what the client says.
 IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
 STEPS_MAX = 24
@@ -210,38 +212,62 @@ def web_version():
         return 0
 
 
-def save_images(images):
-    """Write the composer's pictures (base64, or data: URLs) to UPLOAD_DIR; their paths, or None."""
-    if not isinstance(images, list) or len(images) > IMAGES_MAX or not all(isinstance(x, str) for x in images):
+def _upload_name(name, data):
+    """A safe file name for an upload: no path, no spaces (claude reads a pasted path up to
+    whitespace), and a picture's extension made to match its bytes. Also whether it's a picture."""
+    ext = next((e for magic, e in IMAGE_MAGIC if data.startswith(magic)), None)
+    if not ext and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        ext = "webp"
+    base = re.sub(r"[^\w.+-]+", "_", os.path.basename(name if isinstance(name, str) else "")).strip("._")[:80]
+    if ext:
+        stem = re.sub(r"\.(png|jpe?g|gif|webp|heic|heif)$", "", base, flags=re.I) or "image"
+        return f"{stem}.{ext}", True
+    return base or "file", False
+
+
+def save_files(files):
+    """Write the composer's files to a folder of their own in UPLOAD_DIR.
+
+    Returns [(path, is_picture)], or None if `files` isn't a list of {name, data: base64}.
+    """
+    if (not isinstance(files, list) or len(files) > FILES_MAX
+            or not all(isinstance(x, dict) and isinstance(x.get("data"), str) for x in files)):
         return None
-    datas = []
-    for x in images:
+    named, seen = [], set()
+    for x in files:
         try:
-            data = base64.b64decode(x.partition(",")[2] if x.startswith("data:") else x, validate=True)
+            data = base64.b64decode(x["data"], validate=True)
         except ValueError:
             return None
-        ext = next((e for magic, e in IMAGE_MAGIC if data.startswith(magic)), None)
-        if not ext and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-            ext = "webp"
-        if not ext:
+        if len(data) > FILE_MAX:
             return None
-        datas.append((data, ext))
+        name, picture = _upload_name(x.get("name"), data)
+        stem, dot, ext = name.rpartition(".") if "." in name else (name, "", "")
+        n = 2
+        while name in seen:  # two pastes both called image.png
+            name = f"{stem}-{n}{dot}{ext}"
+            n += 1
+        seen.add(name)
+        named.append((name, data, picture))
     os.makedirs(UPLOAD_DIR, mode=0o700, exist_ok=True)
     now = time.time()
-    for name in os.listdir(UPLOAD_DIR):
+    for old in os.listdir(UPLOAD_DIR):
+        p = os.path.join(UPLOAD_DIR, old)
         try:
-            if now - os.path.getmtime(os.path.join(UPLOAD_DIR, name)) > UPLOAD_KEEP_S:
-                os.remove(os.path.join(UPLOAD_DIR, name))
+            if now - os.path.getmtime(p) > UPLOAD_KEEP_S:
+                shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
         except OSError:
             pass
-    paths = []
-    for data, ext in datas:
-        path = os.path.join(UPLOAD_DIR, f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}.{ext}")
+    folder = os.path.join(UPLOAD_DIR, f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}")
+    os.mkdir(folder, 0o700)
+    out = []
+    for name, data, picture in named:
+        path = os.path.join(folder, name)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "wb") as f:
             f.write(data)
-        paths.append(path)
-    return paths
+        out.append((path, picture))
+    return out
 
 
 def build_state():
@@ -526,19 +552,23 @@ class Handler(BaseHTTPRequestHandler):
         if s["headless"]:
             return self._fail(409, "headless session: nothing to type into")
         if path == "/api/send":
-            text, images = body.get("text", ""), body.get("images") or []
-            if (not isinstance(text, str) or not (text.strip() or images) or len(text) > CHAT_PROMPT_MAX):
+            text, files = body.get("text", ""), body.get("files") or []
+            if (not isinstance(text, str) or not (text.strip() or files) or len(text) > CHAT_PROMPT_MAX):
                 return self._send(400, "text/plain", b"bad request")
             # Typed into an open dialog, the prompt would pick options instead.
             if s["status"] == "waiting":
                 return self._fail(409, "it's waiting on a dialog: answer that first")
-            paths = save_images(images) if images else []
-            if paths is None:
-                return self._fail(400, "not a picture claude can read (PNG, JPEG, GIF or WebP)")
-            ok = session_chat.send_prompt(s["pids"], text.strip(), paths)
+            saved = save_files(files) if files else []
+            if saved is None:
+                return self._fail(400, f"bad attachment (at most {FILES_MAX} files of {FILE_MAX >> 20} MB)")
+            # Pictures are pasted as paths of their own (claude makes them [Image #N]); other
+            # files' paths go into the message, one per line, for claude to Read.
+            pictures = [p for p, pic in saved if pic]
+            prompt = "\n\n".join(x for x in (text.strip(), "\n".join(p for p, pic in saved if not pic)) if x)
+            ok = session_chat.send_prompt(s["pids"], prompt, pictures)
             log_chat("sent" if ok else "not sent", s, json.dumps(truncate(text.strip(), 60), ensure_ascii=False)
-                     + (f" +{len(paths)} picture{'s' if len(paths) > 1 else ''}" if paths else ""))
-            if ok and not paths and CLEAR_RE.match(text.strip()):
+                     + "".join(f" +{os.path.basename(p)}" for p, _ in saved))
+            if ok and not saved and CLEAR_RE.match(text.strip()):
                 return self._cleared(s)
         else:
             steps = body.get("steps")
