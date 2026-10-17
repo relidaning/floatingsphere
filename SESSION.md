@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-17 — Web chat: attach pictures and files; a sent message no longer shows twice
+The web chat can now send pictures and any other file, attached by pasting into the composer or dropping onto the chat, with no attach button (the user asked for none). Pictures are pasted into claude as `[Image #N]` and any other file's path goes into the message. The user tested it and it works (52a6221, 465e076). A message that showed up twice after sending came from an old race: the poll 700 ms after a send could overlap the regular poll, and both got the same lines. That poll has been there since 09-28, and no automatic visit or Claude Code update caused it; most likely a slow round trip over the tunnel made the two overlap, but that wasn't proven. `chatPoll()` now runs one poll at a time (e2ed255). Everything is committed and pushed.
+
 ## 2026-10-17 — Image colour question, no project work
 The session opened with two pasted images and a question about their colours, to be answered in five words. Nothing in the part of the transcript that could be read touched the code. The transcript file disappeared while these notes were being written, so the rest of the session isn't recorded here.
 
