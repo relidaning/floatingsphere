@@ -327,10 +327,33 @@
     padding: 8px max(12px, env(safe-area-inset-right)) max(8px, calc(env(safe-area-inset-bottom) - 16px)) max(12px, env(safe-area-inset-left)); }
   /* keyboard up: the home-indicator inset is under the keyboard, so sit right on top of it */
   .chat.kb .c-foot { padding-bottom: 6px; }
-  .c-foot textarea { flex: 1; min-height: 42px; max-height: 32vh; resize: none; }
+  .c-foot textarea { flex: 1; min-width: 0; min-height: 42px; max-height: 32vh; resize: none; }
+  .c-foot textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .c-foot .send { flex: none; width: 44px; height: 42px; border: 0; border-radius: 12px; background: var(--amber); color: #1a1406;
     font: inherit; font-size: 18px; font-weight: bold; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .c-foot .send:disabled { background: rgba(255,255,255,0.08); color: var(--ink-4); cursor: default; }
+  .c-foot .att { flex: none; width: 36px; height: 42px; border: 0; border-radius: 12px; background: none; color: var(--ink-2);
+    display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; }
+  .c-foot .att:disabled { color: var(--ink-4); cursor: default; }
+  .c-foot .att svg { width: 22px; height: 22px; }
+  /* pictures picked for the next message */
+  .c-atts { flex: none; display: none; gap: 8px; overflow-x: auto;
+    padding: 8px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left)); }
+  .c-atts.show { display: flex; }
+  .c-atts .a { position: relative; flex: none; width: 64px; height: 64px; border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--line); background: rgba(0,0,0,0.35); }
+  .c-atts .a img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .c-atts .a.busy img { opacity: 0.35; }
+  .c-atts .a button { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border: 0; border-radius: 11px;
+    background: rgba(0,0,0,0.65); color: #fff; font: inherit; font-size: 12px; line-height: 22px; padding: 0; cursor: pointer; }
+  .m-imgs { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .m-imgs:not(:last-child) { margin-bottom: 6px; }
+  /* a fixed height, so a picture loading late doesn't move the conversation */
+  .m-imgs img { display: block; height: 150px; min-width: 60px; max-width: min(240px, 100%); object-fit: cover;
+    border-radius: 9px; background: rgba(0,0,0,0.25); cursor: zoom-in; }
+  .m-user.pics { background: none; border: 0; padding: 0; display: flex; flex-direction: column; align-items: flex-end; }
+  .m-user.pics .m-utext { background: rgba(250,191,64,0.13); border: 1px solid rgba(250,191,64,0.28);
+    border-radius: 14px 14px 4px 14px; padding: 8px 12px; }
   /* "/" command picker, narrowed as you type. vh ignores the iOS keyboard, so it is capped at
      ~3 rows and may shrink: the composer always keeps its room above the keyboard */
   .c-cmds { flex: 0 1 auto; min-height: 0; display: none; max-height: min(24vh, 158px); overflow-y: auto; overscroll-behavior: contain;
@@ -501,7 +524,10 @@
   <div class="c-live" id="c-live"></div>
   <div class="c-why" id="c-why"></div>
   <div class="c-cmds" id="c-cmds" role="listbox" aria-label="Commands"></div>
+  <div class="c-atts" id="c-atts"></div>
   <div class="c-foot">
+    <button class="att" id="c-att" aria-label="Attach pictures"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/></svg></button>
+    <input type="file" id="c-file" accept="image/*" multiple hidden>
     <textarea class="field" id="c-in" rows="1" placeholder="Message claude…" enterkeyhint="send"></textarea>
     <button class="send" id="c-send" aria-label="Send" disabled>↑</button>
   </div>
@@ -1060,7 +1086,7 @@ function maybeReload() {
   if (!updateReady) return;
   const b = document.body.classList, input = $("c-in");
   // (A draft only counts in an open chat: opening any chat empties the box anyway.)
-  if (b.contains("adding") || b.contains("asking") || b.contains("resuming") || (chat.id && input.value.trim()) || document.activeElement === input) return;
+  if (b.contains("adding") || b.contains("asking") || b.contains("resuming") || (chat.id && hasDraft()) || document.activeElement === input) return;
   // Inside a chat only right after coming back to the app, so the view never jumps
   // while being read. The reload reopens the chat from #<id>.
   if (chat.id && Date.now() - shownAt > 4000) return;
@@ -1087,6 +1113,10 @@ document.addEventListener("gesturestart", e => e.preventDefault());
 // ---- chat: tap a session to read its conversation, type into it, answer its dialogs ----
 // The transcript comes from /api/chat by byte offset; typing and keys go into the
 // session's kitty window on the PC (session_chat.py), as if typed there.
+// Pictures picked for the next message (see "pictures" below).
+const ATTS_MAX = 6, ATT_SIDE = 2000;
+let atts = [];  // {url: object URL for the thumbnail, data: base64 JPEG once shrunk}
+const hasDraft = () => !!$("c-in").value.trim() || atts.length > 0;
 const chat = {id: null, offset: null, s: null, ctl: false, dialog: null, dlgKey: null, hidden: null,
               timer: null, busy: false, gone: false, switching: null, screen: false, tools: {}, freeRow: null};
 const CHAT_FAST_MS = 1200, CHAT_IDLE_MS = 2500;
@@ -1130,7 +1160,15 @@ function md(src) {
 
 function itemEl(it) {
   const d = document.createElement("div");
-  if (it.k === "user") { d.className = "m-user"; d.innerHTML = mdInline(it.text); }
+  if (it.k === "user" && it.imgs) {
+    // claude's "[Image #N]" placeholders stand for the pictures shown above the text
+    const text = it.text.replace(/\[Image #\d+\]\s*/g, "").trim();
+    const q = `api/image?id=${encodeURIComponent(chat.id)}&at=${it.at}&i=`;
+    d.className = "m-user pics";
+    d.innerHTML = `<div class="m-imgs">${it.imgs.map(i => `<img loading="lazy" alt="picture" src="${q}${i}">`).join("")}</div>` +
+                  (text ? `<div class="m-utext">${mdInline(text)}</div>` : "");
+  }
+  else if (it.k === "user") { d.className = "m-user"; d.innerHTML = mdInline(it.text); }
   else if (it.k === "text") { d.className = "m-text"; d.innerHTML = md(it.text); }
   else if (it.k === "cmd" || it.k === "note") { d.className = "m-" + it.k; d.textContent = it.text; }
   else if (it.k === "tool") {
@@ -1217,7 +1255,8 @@ function renderChatHead() {
   $("c-why").classList.toggle("show", !!why);
   $("c-in").disabled = !!why;
   $("c-in").placeholder = s.status === "busy" ? `Queue a message for ${s.name}…` : s.status === "waiting" ? "Answer the dialog first" : `Message ${s.name}…`;
-  $("c-send").disabled = !!why || !$("c-in").value.trim() || s.status === "waiting" || chat.busy;
+  $("c-send").disabled = !!why || !hasDraft() || atts.some(a => !a.data) || s.status === "waiting" || chat.busy;
+  $("c-att").disabled = !!why || atts.length >= ATTS_MAX;
   tickElapsed();
 }
 
@@ -1268,7 +1307,7 @@ function openChat(id, push = true, why = "tap") {
                        gone: false, screen: false, tools: {}, freeRow: null, toMine: false, fromNotif: false});
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
   cList.innerHTML = switching ? switchingHTML(switching) : `<div class="m-more">loading…</div>`;
-  $("c-in").value = ""; fitInput();
+  $("c-in").value = ""; fitInput(); clearAtts();
   cmds.list = null; renderCmds();
   renderChatHead();
   lockPage(true);
@@ -1345,6 +1384,60 @@ $("c-in").addEventListener("keydown", e => {
   }
 });
 $("c-send").addEventListener("click", sendPrompt);
+
+// ---- pictures ----
+// Picked pictures are shrunk to JPEG here (a phone photo is 3-12 MB, claude scales anything past
+// ~1600px down anyway) and sent with the message; the PC pastes each one into claude as a file path.
+function renderAtts() {
+  const el = $("c-atts");
+  el.classList.toggle("show", atts.length > 0);
+  el.innerHTML = atts.map((a, i) => `<div class="a${a.data ? "" : " busy"}"><img alt="" src="${a.url}"><button data-i="${i}" aria-label="Remove">✕</button></div>`).join("");
+  renderChatHead();
+}
+function clearAtts() {
+  atts.forEach(a => URL.revokeObjectURL(a.url));
+  atts = []; renderAtts();
+}
+function shrink(file) {
+  return new Promise((ok, fail) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, ATT_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      ok(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error("can't read that picture")); };
+    img.src = url;
+  });
+}
+$("c-att").addEventListener("click", () => $("c-file").click());
+$("c-file").addEventListener("change", async e => {
+  const files = [...e.target.files].slice(0, ATTS_MAX - atts.length);
+  e.target.value = "";
+  const owner = chat.id;
+  const added = files.map(f => ({url: URL.createObjectURL(f), data: null}));
+  atts.push(...added); renderAtts();
+  for (const [i, f] of files.entries()) {
+    const a = added[i];
+    try { a.data = await shrink(f); }
+    catch (err) { toast(err.message); atts = atts.filter(x => x !== a); URL.revokeObjectURL(a.url); }
+    if (chat.id !== owner) return;
+    renderAtts();
+  }
+});
+$("c-atts").addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const [a] = atts.splice(+b.dataset.i, 1);
+  URL.revokeObjectURL(a.url); renderAtts();
+});
+cList.addEventListener("click", e => {
+  const img = e.target.closest(".m-imgs img");
+  if (img) window.open(img.src, "_blank");
+});
 
 // ---- "/" commands ----
 // A lone "/word" in the composer lists the session's commands (/api/commands: built-ins,
@@ -1437,17 +1530,17 @@ async function post(path, body) {
 }
 
 async function sendPrompt() {
-  const text = $("c-in").value.trim();
-  if (!text || !chat.id || chat.busy) return;
+  const text = $("c-in").value.trim(), images = atts.map(a => a.data);
+  if (!(text || images.length) || images.some(x => !x) || !chat.id || chat.busy) return;
   // claude's /resume picker is a scrolling list the phone can't drive; show our own.
-  if (/^\/resume$/.test(text)) { $("c-in").value = ""; fitInput(); renderCmds(); return openResume(); }
+  if (!images.length && /^\/resume$/.test(text)) { $("c-in").value = ""; fitInput(); renderCmds(); return openResume(); }
   // /clear starts a new conversation under a new id; the server waits for it and we follow.
-  const clearing = /^\/(clear|new|reset)$/.test(text), from = chat.id;
+  const clearing = !images.length && /^\/(clear|new|reset)$/.test(text), from = chat.id;
   chat.busy = true; renderChatHead();
   if (clearing) { clearTimeout(chat.timer); chat.switching = NEW_CONV; cList.innerHTML = switchingHTML(NEW_CONV); }
   try {
-    const j = await post("api/send", {id: from, text});
-    $("c-in").value = ""; fitInput(); renderCmds();
+    const j = await post("api/send", images.length ? {id: from, text, images} : {id: from, text});
+    $("c-in").value = ""; fitInput(); renderCmds(); clearAtts();
     if (clearing) { if (chat.id === from) followChat(j.id || from); }
     else { cList.scrollTop = cList.scrollHeight; setTimeout(chatPoll, 700); }
   } catch (err) {
@@ -1767,7 +1860,7 @@ async function takePending() {
 function openFromNotification(id) {
   if (chat.id !== id) {
     // A half-written message stays with the chat it was written in.
-    if (chat.id && $("c-in").value.trim()) return toast("notification not opened: this chat has an unsent message");
+    if (chat.id && hasDraft()) return toast("notification not opened: this chat has an unsent message");
     // From inside another chat, take its place, so back still leads to the list.
     if (chat.id) { history.replaceState({chat: id}, "", "#" + encodeURIComponent(id)); openChat(id, false, "notification"); }
     else openChat(id, true, "notification");

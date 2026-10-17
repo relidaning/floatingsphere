@@ -24,11 +24,13 @@ Push needs a secure context, so the same app is served over HTTPS on SPHERE_WEB_
 Run: python3 sphere_web.py   (SPHERE_WEB_HOST / SPHERE_WEB_PORT / SPHERE_WEB_TLS_PORT
      override 0.0.0.0, 8765 and 8766)
 """
+import base64
 import ctypes
 import gzip
 import json
 import os
 import re
+import secrets
 import ssl
 import subprocess
 import sys
@@ -82,6 +84,15 @@ RECENT_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduse
 RECENT_MAX = 15
 PROMPT_MAX = 4000
 CHAT_PROMPT_MAX = 20000
+# Pictures from the composer: saved here and pasted into claude as paths.
+UPLOAD_DIR = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                          "floatingsphere", "uploads")
+UPLOAD_KEEP_S = 7 * 86400  # claude embeds the picture in the transcript; the file is only for the paste
+IMAGES_MAX = 6
+POST_MAX = 16384
+SEND_POST_MAX = 24 * 1024 * 1024  # /api/send with pictures (the page shrinks them to ~0.5 MB each)
+# What claude accepts, told apart by the bytes themselves, never by what the client says.
+IMAGE_MAGIC = ((b"\x89PNG\r\n\x1a\n", "png"), (b"\xff\xd8\xff", "jpg"), (b"GIF87a", "gif"), (b"GIF89a", "gif"))
 STEPS_MAX = 24
 RESUME_WAIT_S = 8
 NEW_WAIT_S = 20  # a new claude registers its session a few seconds after kitty opens
@@ -197,6 +208,40 @@ def web_version():
         return max(int(os.stat(os.path.join(WEB_DIR, n)).st_mtime * 1000) for n in ("index.html", "sw.js"))
     except OSError:
         return 0
+
+
+def save_images(images):
+    """Write the composer's pictures (base64, or data: URLs) to UPLOAD_DIR; their paths, or None."""
+    if not isinstance(images, list) or len(images) > IMAGES_MAX or not all(isinstance(x, str) for x in images):
+        return None
+    datas = []
+    for x in images:
+        try:
+            data = base64.b64decode(x.partition(",")[2] if x.startswith("data:") else x, validate=True)
+        except ValueError:
+            return None
+        ext = next((e for magic, e in IMAGE_MAGIC if data.startswith(magic)), None)
+        if not ext and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            ext = "webp"
+        if not ext:
+            return None
+        datas.append((data, ext))
+    os.makedirs(UPLOAD_DIR, mode=0o700, exist_ok=True)
+    now = time.time()
+    for name in os.listdir(UPLOAD_DIR):
+        try:
+            if now - os.path.getmtime(os.path.join(UPLOAD_DIR, name)) > UPLOAD_KEEP_S:
+                os.remove(os.path.join(UPLOAD_DIR, name))
+        except OSError:
+            pass
+    paths = []
+    for data, ext in datas:
+        path = os.path.join(UPLOAD_DIR, f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(4)}.{ext}")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        paths.append(path)
+    return paths
 
 
 def build_state():
@@ -368,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "application/json", state_json())
         elif path == "/api/weeks":
             self._send(200, "application/json", json.dumps(usage_history.weeks_json(weekly_target())).encode())
-        elif path in ("/api/chat", "/api/screen", "/api/commands", "/api/resume"):
+        elif path in ("/api/chat", "/api/screen", "/api/commands", "/api/resume", "/api/image"):
             q = parse_qs(query)
             target = (q.get("id") or [""])[0]
             s = find_session(target)
@@ -382,6 +427,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/resume":
                 past = resumable(s)
                 return self._send(200, "application/json", json.dumps({"sessions": past, "now": time.time()}).encode())
+            if path == "/api/image":
+                return self._image(s, q)
             if path == "/api/screen":
                 text = None if s["headless"] else session_chat.read_screen(s["pids"])
                 return self._send(200, "application/json", json.dumps({"text": text}).encode())
@@ -425,11 +472,11 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = -1
-        if not 0 <= length <= 16384:
+        path = self.path.split("?", 1)[0]
+        if not 0 <= length <= (SEND_POST_MAX if path == "/api/send" else POST_MAX):
             self.close_connection = True
             return self._send(400, "text/plain", b"bad request")
         raw = self.rfile.read(length)
-        path = self.path.split("?", 1)[0]
         if path not in ("/api/stop", "/api/new", "/api/send", "/api/keys", "/api/resume", "/api/push/on",
                         "/api/push/off", "/api/push/away"):
             return self._send(404, "text/plain", b"not found")
@@ -479,15 +526,19 @@ class Handler(BaseHTTPRequestHandler):
         if s["headless"]:
             return self._fail(409, "headless session: nothing to type into")
         if path == "/api/send":
-            text = body.get("text")
-            if not isinstance(text, str) or not text.strip() or len(text) > CHAT_PROMPT_MAX:
+            text, images = body.get("text", ""), body.get("images") or []
+            if (not isinstance(text, str) or not (text.strip() or images) or len(text) > CHAT_PROMPT_MAX):
                 return self._send(400, "text/plain", b"bad request")
             # Typed into an open dialog, the prompt would pick options instead.
             if s["status"] == "waiting":
                 return self._fail(409, "it's waiting on a dialog: answer that first")
-            ok = session_chat.send_prompt(s["pids"], text.strip())
-            log_chat("sent" if ok else "not sent", s, json.dumps(truncate(text.strip(), 60), ensure_ascii=False))
-            if ok and CLEAR_RE.match(text.strip()):
+            paths = save_images(images) if images else []
+            if paths is None:
+                return self._fail(400, "not a picture claude can read (PNG, JPEG, GIF or WebP)")
+            ok = session_chat.send_prompt(s["pids"], text.strip(), paths)
+            log_chat("sent" if ok else "not sent", s, json.dumps(truncate(text.strip(), 60), ensure_ascii=False)
+                     + (f" +{len(paths)} picture{'s' if len(paths) > 1 else ''}" if paths else ""))
+            if ok and not paths and CLEAR_RE.match(text.strip()):
                 return self._cleared(s)
         else:
             steps = body.get("steps")
@@ -500,6 +551,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._fail(409, "no kitty window with remote control for this session")
         _cache["at"] = 0.0
         self._send(200, "application/json", b'{"ok": true}')
+
+    def _image(self, s, q):
+        """A picture from the session's transcript, as /api/chat listed it (`at`, `i`)."""
+        try:
+            at, index = int((q.get("at") or [""])[0]), int((q.get("i") or [""])[0])
+        except ValueError:
+            return self._send(400, "text/plain", b"bad request")
+        path = session_chat.transcript_path(s["cwd"], s["session_id"]) if s["session_id"] else None
+        img = session_chat.read_image(path, at, index) if path and at >= 0 and index >= 0 else None
+        if not img:
+            return self._send(404, "text/plain", b"not found")
+        # A transcript line never changes, so the phone can keep it.
+        self._send(200, img[0], img[1], max_age=STATIC_MAX_AGE)
 
     def _cleared(self, s):
         """/clear was typed: wait for the new conversation's id, so the chat can follow it."""

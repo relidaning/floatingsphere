@@ -164,6 +164,11 @@ Type in the box and press ↑ to send the prompt. It is typed into the session's
 window on the PC, as if you typed it there. While Claude is working, a message you
 send is queued for its next turn, and **esc** interrupts it.
 
+The picture button left of the box attaches photos or screenshots (up to 6, shrunk on
+the phone first). They go to the PC and are pasted into claude as `[Image #N]`, the same
+as dropping a file on the terminal, ahead of whatever you typed. Sent pictures show in
+the conversation; tap one to see it full size.
+
 When the session stops on a choice, such as a permission prompt ("Do you want to
 proceed?") or a question from AskUserQuestion, a sheet pops up with the options:
 - tap one to answer;

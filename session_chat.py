@@ -16,6 +16,7 @@ type a prompt into it, and answer the dialogs it stops on.
 Claude Code's own peer socket (`messagingSocketPath`) was not used: it delivers
 "messages from another session", which are framed as untrusted and can't answer a dialog.
 """
+import base64
 import glob
 import json
 import os
@@ -34,6 +35,7 @@ RESULT_MAX = 600              # chars of a tool result kept for the phone
 TEXT_MAX = 20000
 # What the phone may press. Digits go as text; the rest are kitty key names.
 KEYS = {"enter", "escape", "up", "down", "left", "right", "tab", "shift+tab", "backspace"}
+IMAGE_PASTE_S = 0.5           # claude reads the pasted file before it shows [Image #N]
 STEP_GAP_S = 0.25             # let Ink redraw between keys (a digit opens a text field)
 
 
@@ -105,8 +107,12 @@ def _result_text(content):
     return ""
 
 
-def _user_items(entry, content):
-    """Chat items for a `user` entry: a prompt, a slash command, or tool results."""
+def _user_items(entry, content, at=None):
+    """Chat items for a `user` entry: a prompt, a slash command, or tool results.
+
+    A prompt's images are listed as their block index in `imgs`, with `at` the entry's byte
+    offset in the transcript, so read_image() can find them again without a scan.
+    """
     uid, ts = entry.get("uuid"), entry.get("timestamp")
     if isinstance(content, str):
         if content.startswith("<local-command-caveat>"):
@@ -124,7 +130,7 @@ def _user_items(entry, content):
         if text.startswith("[Request interrupted"):
             return [{"k": "note", "id": uid, "ts": ts, "text": "interrupted"}]
         return [{"k": "user", "id": uid, "ts": ts, "text": _clip(text, TEXT_MAX)}]
-    items, texts = [], []
+    items, texts, imgs = [], [], []
     for i, b in enumerate(content or []):
         t = b.get("type")
         if t == "tool_result":
@@ -138,13 +144,18 @@ def _user_items(entry, content):
             elif s:
                 items.append({"k": "note", "id": f"{uid}:{i}", "ts": ts, "text": "interrupted"})
         elif t == "image":
-            texts.append("[image]")
-    if texts:
-        items.insert(0, {"k": "user", "id": uid, "ts": ts, "text": _clip("\n\n".join(texts), TEXT_MAX)})
+            imgs.append(i)
+    if texts or imgs:
+        item = {"k": "user", "id": uid, "ts": ts, "text": _clip("\n\n".join(texts), TEXT_MAX)}
+        if imgs and at is not None:
+            item.update(at=at, imgs=imgs)
+        elif imgs:
+            item["text"] = (item["text"] + "\n\n[image]").strip()
+        items.insert(0, item)
     return items
 
 
-def entry_items(entry):
+def entry_items(entry, at=None):
     kind = entry.get("type")
     if entry.get("isSidechain") or entry.get("isMeta"):
         return []
@@ -155,7 +166,7 @@ def entry_items(entry):
     if kind == "user":
         if entry.get("isCompactSummary"):
             return []
-        return _user_items(entry, message.get("content"))
+        return _user_items(entry, message.get("content"), at)
     if kind != "assistant":
         return []
     items = []
@@ -199,15 +210,40 @@ def _read_items(path, start, size, reset):
         cut = data.find(b"\n") + 1
         start, data = start + cut, data[cut:]
     end = data.rfind(b"\n") + 1
-    items = []
+    items, pos = [], start
     for line in data[:end].split(b"\n"):
+        at, pos = pos, pos + len(line) + 1
         if not line.startswith(b"{"):
             continue
         try:
-            items.extend(entry_items(json.loads(line)))
+            items.extend(entry_items(json.loads(line), at))
         except (ValueError, AttributeError):
             continue
     return {"items": items, "offset": start + end, "reset": reset, "truncated": reset and start > 0}
+
+
+IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+
+def read_image(path, at, index):
+    """(media type, bytes) of image block `index` of the transcript entry at byte `at`, or None."""
+    try:
+        with open(path, "rb") as f:
+            if at > 0:
+                f.seek(at - 1)
+                if f.read(1) != b"\n":  # only the start of a line, as read_chat gave it
+                    return None
+            else:
+                f.seek(0)
+            entry = json.loads(f.readline())
+        block = entry["message"]["content"][index]
+        src = block["source"]
+        if (entry.get("type") != "user" or block.get("type") != "image" or src.get("type") != "base64"
+                or src.get("media_type") not in IMAGE_TYPES):
+            return None
+        return src["media_type"], base64.b64decode(src["data"])
+    except (OSError, ValueError, KeyError, IndexError, TypeError, AttributeError):
+        return None
 
 
 # ---------------------------------------------------------------- kitty
@@ -285,10 +321,20 @@ def read_screen(pids):
     return _in_window(pids, "get-text")
 
 
-def send_prompt(pids, text):
-    """Type `text` into the session's prompt and submit it. False if it has no kitty window."""
+def send_prompt(pids, text, images=()):
+    """Type `text` into the session's prompt and submit it. False if it has no kitty window.
+
+    `images` are paths of image files: claude turns a pasted image path into an
+    `[Image #N]` attachment (what dragging a file onto the terminal does), so each goes in
+    as a paste of its own, ahead of the text.
+    """
     # Bracketed paste keeps newlines inside the prompt instead of submitting early.
-    if _in_window(pids, "send-text", "--bracketed-paste=enable", "--", text) is None:
+    for p in images:
+        if _in_window(pids, "send-text", "--bracketed-paste=enable", "--", p) is None:
+            return False
+        time.sleep(IMAGE_PASTE_S)
+    if text and _in_window(pids, "send-text", "--bracketed-paste=enable", "--",
+                           (" " if images else "") + text) is None:
         return False
     time.sleep(0.2)
     return _in_window(pids, "send-key", "enter") is not None
