@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-17 — Web app adapts to the iPad mini
+The web view now gives the iPad mini (744×1133) two columns upright too (from 700px), and keeps the + sheet and dialogs as bottom sheets (capped at 560px) at any width on iOS. iOS is detected with `html.ios`, which also checks `maxTouchPoints` because iPadOS reports a Mac UA. The keyboard fitting now runs on iOS at any width (`desk()` = not iOS and ≥700px), since landscape above 760px had been treated as a desktop with the keyboard fixes off, and `kbH` is stored per orientation. Checked only with Playwright screenshots in an emulated iPad mini (the desktop dialog is unchanged at 1280px), not on the real device. Left uncommitted in `web/index.html` and CLAUDE.md.
+
 ## 2026-10-17 — Web chat: attach pictures and files; a sent message no longer shows twice
 The web chat can now send pictures and any other file, attached by pasting into the composer or dropping onto the chat, with no attach button (the user asked for none). Pictures are pasted into claude as `[Image #N]` and any other file's path goes into the message. The user tested it and it works (52a6221, 465e076). A message that showed up twice after sending came from an old race: the poll 700 ms after a send could overlap the regular poll, and both got the same lines. That poll has been there since 09-28, and no automatic visit or Claude Code update caused it; most likely a slow round trip over the tunnel made the two overlap, but that wasn't proven. `chatPoll()` now runs one poll at a time (e2ed255). Everything is committed and pushed.
 
