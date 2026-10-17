@@ -1270,34 +1270,44 @@ function renderChatHead() {
     tickElapsed();
 }
 
+// One poll at a time. A second chatPoll() while one is out (the post-send nudge, a dialog key,
+// coming back to the app) only asks for another right after it: two polls from the same offset
+// both got the new lines, and the message just sent showed twice (2026-10-17).
 async function chatPoll() {
   clearTimeout(chat.timer);
   const id = chat.id;
   if (!id) return;
+  if (chat.polling) { chat.again = true; return; }
+  const token = chat.polling = {}, from = chat.offset;
+  chat.again = false;
   try {
     const why = chat.why;
-    const q = `api/chat?id=${encodeURIComponent(id)}` + (chat.offset != null ? `&offset=${chat.offset}` : "") + (why ? `&why=${why}` : "");
+    const q = `api/chat?id=${encodeURIComponent(id)}` + (from != null ? `&offset=${from}` : "") + (why ? `&why=${why}` : "");
     const r = await fetch(q, {cache: "no-store"});
-    if (id !== chat.id) return;
+    if (id !== chat.id || token !== chat.polling) return;
     if (chat.why === why) chat.why = null;  // logged on the PC once per open
     if (r.status === 404) {
       // Cleared on the PC (or here): the same session now goes by another id.
       const moved = (await r.json().catch(() => ({}))).moved;
-      if (id !== chat.id) return;
+      if (id !== chat.id || token !== chat.polling) return;
       if (moved) return followChat(moved);
       chat.gone = true; closeDialog(); renderChatHead(); return;
     }
     if (!r.ok) throw new Error(r.status);
     const j = await r.json();
-    if (id !== chat.id) return;
+    // (and never apply lines from an offset already read past)
+    if (id !== chat.id || token !== chat.polling || chat.offset !== from) return;
     chat.gone = false; chat.switching = null;
     chat.s = j.session; chat.ctl = j.ctl; chat.offset = j.offset;
     addItems(j.items, j.reset, j.truncated);
     setDialog(j.dialog);
     renderChatHead();
   } catch (e) { /* offline: keep what's shown, try again */ }
+  finally { if (chat.polling === token) chat.polling = null; }
+  if (id !== chat.id) return;
+  if (chat.again) return chatPoll();
   if (chat.screen) screenPoll();
-  if (id === chat.id && !document.hidden) {
+  if (!document.hidden) {
     const fast = chat.s && (chat.s.status === "busy" || chat.s.status === "waiting");
     chat.timer = setTimeout(chatPoll, fast ? CHAT_FAST_MS : CHAT_IDLE_MS);
   }
@@ -1313,7 +1323,7 @@ function openChat(id, push = true, why = "tap") {
   const s = state && state.sessions.find(x => x.id === id);
   const switching = chat.switching;
   if (chat.id && chat.id !== id && !switching && why !== "tap") toast(`now in ${s ? s.name : "another session"}`, true);
-  Object.assign(chat, {id, why, offset: null, s: s || (switching ? chat.s : null), ctl: false, dialog: null, dlgKey: null, hidden: null,
+  Object.assign(chat, {id, why, offset: null, polling: null, again: false, s: s || (switching ? chat.s : null), ctl: false, dialog: null, dlgKey: null, hidden: null,
                        gone: false, screen: false, tools: {}, freeRow: null, toMine: false, fromNotif: false});
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
   cList.innerHTML = switching ? switchingHTML(switching) : `<div class="m-more">loading…</div>`;
