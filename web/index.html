@@ -12,6 +12,11 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="manifest" href="manifest.json">
+<script>
+// iPadOS Safari reports itself as a Mac; the touch points give it away.
+if (/iP(hone|od|ad)/.test(navigator.userAgent) || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1))
+  document.documentElement.classList.add("ios");
+</script>
 <style>
   /* Palette shared with floatingsphere.py / hovercard.py / sphere_popup.py */
   :root {
@@ -40,8 +45,8 @@
     -webkit-text-size-adjust: 100%;
   }
   main { max-width: 960px; margin: 0 auto; display: grid; gap: 16px; }
-  @media (min-width: 760px) {
-    main { grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr; align-items: start; }
+  @media (min-width: 700px) {
+    main { grid-template-columns: min(340px, 45%) 1fr; grid-template-rows: auto 1fr; align-items: start; }
     .left { position: sticky; top: 16px; grid-row: span 2; }
   }
   .card {
@@ -144,7 +149,7 @@
   .toast.show { opacity: 1; }
   .toast.ok { background: #13241d; border-color: rgba(31,168,116,0.55); color: #4fd6a0; }
 
-  /* + : new session sheet (bottom sheet on phones, a dialog from 760px) */
+  /* + : new session sheet (bottom sheet on phones and iPads, a dialog from 700px on a desktop) */
   /* the floating + stays at the bottom, in thumb reach; the page pads for it */
   body { padding-bottom: calc(max(24px, env(safe-area-inset-bottom)) + 72px); }
   .add {
@@ -162,7 +167,7 @@
   .add:active { transform: scale(.92); }
   @media (hover: hover) { .add:hover { background: rgba(250,191,64,0.14); } }
   body.adding .add { opacity: 0; transform: scale(.6); pointer-events: none; }
-  @media (min-width: 760px) { .add { right: max(24px, calc(50% - 480px - 76px)); bottom: 24px; } }
+  @media (min-width: 700px) { .add { right: max(24px, calc(50% - 480px - 76px)); bottom: 24px; } }
   .scrim { position: fixed; inset: 0; background: rgba(5,6,9,0.6); opacity: 0; transition: opacity .2s;
     pointer-events: none; z-index: 10; }
   .sheet {
@@ -177,12 +182,16 @@
   body.adding .sheet { transform: none; visibility: visible; }
   body.adding { overflow: hidden; }
   .grip { width: 36px; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.18); margin: 0 auto 10px; }
-  @media (min-width: 760px) {
-    .sheet { left: 50%; right: auto; bottom: auto; top: 50%; width: 460px; max-height: 80vh;
+  /* on an iPad it stays a bottom sheet, so the keyboard can't cover it, only narrower */
+  @media (min-width: 700px) {
+    .sheet, .dlg { margin: 0 auto; max-width: 560px; }
+  }
+  @media (min-width: 700px) {
+    html:not(.ios) .sheet { margin: 0; max-width: none; left: 50%; right: auto; bottom: auto; top: 50%; width: 460px; max-height: 80vh;
       border: 1px solid var(--line); border-radius: 16px; padding: 16px;
       transform: translate(-50%, calc(-50% + 16px)); opacity: 0; transition: transform .2s, opacity .2s; }
-    body.adding .sheet { transform: translate(-50%, -50%); opacity: 1; }
-    .grip { display: none; }
+    html:not(.ios) body.adding .sheet { transform: translate(-50%, -50%); opacity: 1; }
+    html:not(.ios) .grip { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { .sheet, .scrim { transition: none; } }
   .sheet .head { margin-bottom: 12px; }
@@ -398,10 +407,10 @@
   }
   body.asking .dlg-scrim, body.resuming .dlg-scrim { opacity: 1; pointer-events: auto; }
   body.asking #dlg, body.resuming #rsm { transform: none; visibility: visible; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
-  @media (min-width: 760px) {
-    .dlg { left: 50%; right: auto; bottom: auto; top: 50%; width: 520px; max-height: 84vh; border: 1px solid rgba(217,89,38,0.45);
+  @media (min-width: 700px) {
+    html:not(.ios) .dlg { margin: 0; max-width: none; left: 50%; right: auto; bottom: auto; top: 50%; width: 520px; max-height: 84vh; border: 1px solid rgba(217,89,38,0.45);
       border-radius: 16px; padding: 16px; transform: translate(-50%, calc(-50% + 16px)); opacity: 0; transition: transform .2s, opacity .2s, visibility 0s .2s; }
-    body.asking #dlg, body.resuming #rsm { transform: translate(-50%, -50%); opacity: 1; transition: transform .2s, opacity .2s; }
+    html:not(.ios) body.asking #dlg, html:not(.ios) body.resuming #rsm { transform: translate(-50%, -50%); opacity: 1; transition: transform .2s, opacity .2s; }
   }
   .dlg .head { margin-bottom: 8px; }
   .dlg .head h2 { color: #ec8a5f; }
@@ -432,7 +441,7 @@
   .d-none { font-size: 12px; color: var(--ink-3); padding: 8px 2px; }
 
   /* weekly usage: a board of the last 52 weeks (usage_history.py), one cell per 7-day window */
-  @media (min-width: 760px) { #weeks, #sessions { grid-column: 2; } }
+  @media (min-width: 700px) { #weeks, #sessions { grid-column: 2; } }
   .wk svg { display: block; width: 100%; overflow: visible; }
   .wk text { font: 10px "JetBrains Mono", ui-monospace, monospace; fill: var(--ink-3); }
   .wk .cell { cursor: pointer; }
@@ -731,9 +740,12 @@ function closeSheet() { document.body.classList.remove("adding"); document.activ
 // Typing the opening task: keep the sheet above the on-screen keyboard (iOS leaves
 // fixed elements under it) and scroll the task field to the top of the sheet.
 const vv = window.visualViewport;
+const isIOS = document.documentElement.classList.contains("ios");
+// A desktop: no on-screen keyboard to fit around, and the sheets are centered dialogs.
+const desk = () => !isIOS && innerWidth >= 700;
 function fitSheet() {
   const sheet = $("sheet"), typing = document.activeElement === $("prompt");
-  if (!vv || !typing || innerWidth >= 760) { sheet.style.bottom = sheet.style.maxHeight = ""; return; }
+  if (!vv || !typing || desk()) { sheet.style.bottom = sheet.style.maxHeight = ""; return; }
   sheet.style.bottom = Math.max(0, innerHeight - vv.height - vv.offsetTop) + "px";
   sheet.style.maxHeight = (vv.height - 8) + "px";
 }
@@ -1261,7 +1273,8 @@ function renderChatHead() {
   let why = "";
   if (chat.gone) why = "this session has ended";
   else if (s.headless) why = "headless run: there's no terminal to type into";
-  else if (!chat.ctl) why = "no remote control for this terminal: it was opened before kitty remote control was enabled";
+  // (null until the chat's first reply: the box stays usable while it loads)
+  else if (chat.ctl === false) why = "no remote control for this terminal: it was opened before kitty remote control was enabled";
   $("c-why").textContent = why;
   $("c-why").classList.toggle("show", !!why);
   $("c-in").disabled = !!why;
@@ -1323,7 +1336,7 @@ function openChat(id, push = true, why = "tap") {
   const s = state && state.sessions.find(x => x.id === id);
   const switching = chat.switching;
   if (chat.id && chat.id !== id && !switching && why !== "tap") toast(`now in ${s ? s.name : "another session"}`, true);
-  Object.assign(chat, {id, why, offset: null, polling: null, again: false, s: s || (switching ? chat.s : null), ctl: false, dialog: null, dlgKey: null, hidden: null,
+  Object.assign(chat, {id, why, offset: null, polling: null, again: false, s: s || (switching ? chat.s : null), ctl: null, dialog: null, dlgKey: null, hidden: null,
                        gone: false, screen: false, tools: {}, freeRow: null, toMine: false, fromNotif: false});
   $("chat").classList.remove("screen"); $("c-scr").classList.remove("on");
   cList.innerHTML = switching ? switchingHTML(switching) : `<div class="m-more">loading…</div>`;
@@ -1829,7 +1842,7 @@ $("chat").addEventListener("touchmove", e => {
 // iOS leaves fixed elements under the keyboard: size the panel to the visible viewport.
 function fitChat(e) {
   const c = $("chat");
-  if (!vv || innerWidth >= 760) { c.style.height = c.style.top = ""; return; }
+  if (!vv || desk()) { c.style.height = c.style.top = ""; return; }
   // iOS fires these continuously (fractional values) while it pans to keep the caret in
   // view; only whole-pixel changes are applied, so the panel doesn't chase sub-pixel noise.
   const h = Math.round(vv.height) + "px", top = Math.round(vv.offsetTop) + "px";
@@ -1839,8 +1852,10 @@ function fitChat(e) {
   // every pan, which would pull the list down while typing.
   if (e && e.type === "resize" && document.activeElement === $("c-in") && nearBottom()) cList.scrollTop = cList.scrollHeight;
   // Remember how tall the keyboard is, for focusComposer() next time.
+  // Not mid-rotation, though: the viewport then has one orientation's size and the window
+  // the other's, and the iPad once stored 744px for its 720px-high landscape window.
   const kb = Math.round(innerHeight - vv.height);
-  if (kb > 150) { kbH = kb; try { localStorage.setItem("kbH", kb); } catch {} }
+  if (kb > 150 && kb < innerHeight * 0.6 && Math.abs(vv.width - innerWidth) < 2) { kbH = kb; try { localStorage.setItem(kbKey(), kb); } catch {} }
   c.classList.toggle("kb", kb > 150);
 }
 if (vv) { vv.addEventListener("resize", fitChat); vv.addEventListener("scroll", fitChat); }
@@ -1849,15 +1864,21 @@ if (vv) { vv.addEventListener("resize", fitChat); vv.addEventListener("scroll", 
 // slides the header off the top until fitChat() snaps the panel back. Instead, focus it
 // ourselves with the panel already sized for the keyboard (or, before we know its height,
 // with the box lifted to the top for a moment), so iOS finds it in view and doesn't pan.
+// An iPad's keyboard is a different height upright and on its side, so one per orientation.
+const kbKey = () => innerWidth > innerHeight ? "kbH-wide" : "kbH";
 let kbH = 0;
-try { kbH = +localStorage.getItem("kbH") || 0; } catch {}
-const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1);
+const loadKbH = () => {
+  try { kbH = +localStorage.getItem(kbKey()) || 0; } catch { kbH = 0; }
+  if (kbH >= innerHeight * 0.6) kbH = 0;  // a bad one stored before fitChat() checked
+};
+loadKbH();
+addEventListener("orientationchange", () => setTimeout(loadKbH, 300));
 let tapY = null;
 $("c-in").addEventListener("touchstart", e => { tapY = e.touches.length === 1 ? e.touches[0].clientY : null; }, {passive: true});
 $("c-in").addEventListener("touchend", e => {
   const t = e.currentTarget, y = tapY;
   tapY = null;
-  if (!isIOS || !vv || innerWidth >= 760 || t.disabled || document.activeElement === t) return;
+  if (!isIOS || !vv || t.disabled || document.activeElement === t) return;
   if (y === null || Math.abs(e.changedTouches[0].clientY - y) > 10) return;  // a drag, not a tap
   e.preventDefault();
   const c = $("chat"), stick = nearBottom();
