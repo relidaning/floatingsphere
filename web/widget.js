@@ -201,9 +201,7 @@ function sessionRows(stack, v, max) {
 function build(v, offline) {
   const fam = config.widgetFamily || "medium";
   const w = new ListWidget();
-  // iOS can't open the home-screen app from a widget, and the browser wasn't wanted, so a
-  // tap only runs this script in Scriptable, which closes itself again (below).
-  w.url = `scriptable:///run/${encodeURIComponent(Script.name())}?tap=1`;
+  w.url = BASE + "/";
   w.refreshAfterDate = new Date(Date.now() + REFRESH_S * 1000);
   const note = offline ? "offline" : v.stale ? "stale" : null;
 
@@ -271,6 +269,5 @@ const {d, offline} = await load();
 const v = view(d);
 const widget = build(v, offline);
 if (config.runsInWidget) Script.setWidget(widget);
-else if (args.queryParameters.tap) { try { App.close(); } catch (_) {} }
 else await widget.presentMedium();
 Script.complete();
