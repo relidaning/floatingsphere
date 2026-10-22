@@ -67,7 +67,8 @@ touching it.
 
 Sizes: small (the sphere and 5h / 7d), medium and large (plus today's ceiling and the
 sessions by status), and the lock screen's circular, rectangular and inline widgets.
-Tapping it opens the web view in Safari. iOS decides when a widget refreshes, usually
+Tapping it does nothing (Scriptable flashes up and closes): iOS can't open a home-screen
+web app from a widget, so keep the app's icon next to it. iOS decides when a widget refreshes, usually
 every 15 minutes or so, so it's for a quick look; notifications are still the fast path.
 Away from the server it shows the last data it got, marked "offline".
 
