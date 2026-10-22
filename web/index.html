@@ -1145,10 +1145,24 @@ function mdInline(s) {
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')).join("");
 }
 // Just enough markdown for claude's replies: fences, headings, lists, quotes, tables as text.
+// A fence may be indented (inside a list item claude indents it 3 spaces); its code loses
+// that indent. Unrecognised, the code was joined into the list item as one line, and a
+// script copied from there wouldn't run.
+function fences(src) {
+  const parts = [[]];
+  let indent = null;
+  for (const line of src.split("\n")) {
+    const m = line.match(/^(\s*)```/);
+    if (m) { indent = indent === null ? m[1].length : null; parts.push([]); continue; }
+    const cut = indent ? line.match(new RegExp(`^ {0,${indent}}`))[0].length : 0;
+    parts[parts.length - 1].push(line.slice(cut));
+  }
+  return parts.map(p => p.join("\n"));
+}
 function md(src) {
   const out = [];
-  src.split(/^```.*$/m).forEach((part, i) => {
-    if (i % 2) { out.push(`<pre><code>${esc(part.replace(/^\n|\n$/g, ""))}</code></pre>`); return; }
+  fences(src).forEach((part, i) => {
+    if (i % 2) { out.push(`<pre><code>${esc(part)}</code></pre>`); return; }
     let list = null, para = [], table = [];
     const flushPara = () => { if (para.length) out.push(`<p>${para.map(mdInline).join("<br>")}</p>`); para = []; };
     const flushList = () => { if (list) out.push(`<${list.tag}>${list.items.map(t => `<li>${mdInline(t)}</li>`).join("")}</${list.tag}>`); list = null; };
