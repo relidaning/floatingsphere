@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-22 — Phone widget via Scriptable
+Asked for the app as a home-screen widget, so `web/widget.js` (a Scriptable script loaded by a pasted loader, drawing a still port of the sphere from `GET /api/widget`) was added, since iOS gives home-screen web apps no widgets (45a46e5); the web chat also learned indented code fences (1fe38b1). Making a tap do nothing (Scriptable runs and closes) was tried and reverted at the user's request because Scriptable flashing up was worse than opening the browser (0bd671a, reverted in 9184ea0); all pushed.
+
 ## 2026-10-19 — iPad keyboard didn't come up in the home-screen app
 On the iPad the composer took focus (amber border) but no on-screen keyboard came up. A temporary tap log in sphere-web's journal (focus, keyboard height before/after) showed iPadOS reserving only 34px whether the tap went through our `touchend` handler or straight to iOS. Bluetooth off changed nothing, OneNote and the same page in Safari had a keyboard, so it was the known iPadOS home-screen web app bug ([WebKit 279904](https://bugs.webkit.org/show_bug.cgi?id=279904)), not the page. Quitting the app didn't help; restarting the iPad fixed it (the log then showed 340/428px keyboards). Two small fixes found on the way: the composer was disabled until a chat's first poll answered (`chat.ctl` now starts `null`, not `false`), and a landscape `kbH` of 744px had been stored mid-rotation for a 720px window (now only stored when `visualViewport` and the window agree, and a too-tall stored one is ignored). The tap log was removed. Committed with the 10-17 iPad layout work.
 
