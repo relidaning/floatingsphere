@@ -68,6 +68,7 @@ STATIC = {
     "/icon-512.png": ("icon-512.png", "image/png"),
     "/favicon.ico": ("favicon.png", "image/png"),
     "/favicon.png": ("favicon.png", "image/png"),
+    "/widget.js": ("widget.js", "text/javascript; charset=utf-8"),
 }
 # The page embeds live state and the API is live; the rest only changes on a deploy.
 STATIC_MAX_AGE = 86400
@@ -405,6 +406,13 @@ def state_json():
     return _cache["body"]
 
 
+def widget_json():
+    """What the phone's Scriptable widget (web/widget.js) draws: the sphere's data and each session's status."""
+    state = json.loads(state_json())
+    sessions = [{"name": x["name"], "status": x["status"]} for x in state["sessions"]]
+    return json.dumps({k: state[k] for k in ("now", "usage", "quota")} | {"sessions": sessions}).encode()
+
+
 def one_malloc_arena():
     """Keep glibc to its main malloc arena.
 
@@ -437,6 +445,8 @@ class Handler(BaseHTTPRequestHandler):
             # The open app says which push subscription it is, so that device isn't notified meanwhile.
             webpush.set_active(self.headers.get("X-Push-Endpoint"))
             self._send(200, "application/json", state_json())
+        elif path == "/api/widget":
+            self._send(200, "application/json", widget_json())
         elif path == "/api/weeks":
             self._send(200, "application/json", json.dumps(usage_history.weeks_json(weekly_target())).encode())
         elif path in ("/api/chat", "/api/screen", "/api/commands", "/api/resume", "/api/image"):
@@ -479,8 +489,8 @@ class Handler(BaseHTTPRequestHandler):
                     body = f.read()
             except OSError:
                 return self._send(404, "text/plain", b"not found")
-            if name == "sw.js":
-                self._send(200, ctype, body)  # the browser checks it for updates; don't pin it
+            if name in ("sw.js", "widget.js"):
+                self._send(200, ctype, body)  # checked for updates (the widget's loader fetches it each run); don't pin it
             elif name == "index.html":
                 # Inline the current state so the first paint doesn't wait on /api/state.
                 body = body.replace(INITIAL_MARK, state_json().replace(b"</", b"<\\/"), 1)

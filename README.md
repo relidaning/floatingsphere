@@ -56,6 +56,21 @@ Push needs HTTPS, so `sphere-web` also listens on `https://<pc>:8766`, using
 from a mkcert CA installed on it). On an iPhone, open that address in Safari, add it to
 the home screen, open it from there and tap the 🔔 next to Sessions.
 
+## Phone widget
+
+The sphere can also sit on an iPhone or iPad home screen (or lock screen) as a widget,
+through the free [Scriptable](https://scriptable.app) app. Copy the loader from the top of
+`web/widget.js` into a new Scriptable script, set `BASE` to the address your phone uses
+for the web view, then add a Scriptable widget and pick that script. The loader fetches
+`/widget.js` from `sphere-web` each time it runs, so changes reach the phone without
+touching it.
+
+Sizes: small (the sphere and 5h / 7d), medium and large (plus today's ceiling and the
+sessions by status), and the lock screen's circular, rectangular and inline widgets.
+Tapping it opens the web view in Safari. iOS decides when a widget refreshes, usually
+every 15 minutes or so, so it's for a quick look; notifications are still the fast path.
+Away from the server it shows the last data it got, marked "offline".
+
 ## Data sources
 
 - **Usage**: `~/.claude/state/usage_snapshot.json` (`rate_limits.five_hour` / `seven_day`
