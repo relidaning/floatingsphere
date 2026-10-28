@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-28 — One besmart session showed as two
+Since Claude Code 2.1.312 a session moved to the background can be forked into a daemon job with a new `sessionId` (`--fork-session --resume`), so the terminal and the job showed up as two sessions. `collect_sessions()` now merges them through the terminal's `parkedJobId` (= the job's `jobId`). The merged session is listed under the fork's id once its transcript exists and under the terminal's until then, so the web chat isn't empty, and `successor()` follows the switch like a /clear (fbd55a9, pushed; CLAUDE.md note in the same commit).
+
 ## 2026-10-22 — Phone widget via Scriptable
 Asked for the app as a home-screen widget, so `web/widget.js` (a Scriptable script loaded by a pasted loader, drawing a still port of the sphere from `GET /api/widget`) was added, since iOS gives home-screen web apps no widgets (45a46e5); the web chat also learned indented code fences (1fe38b1). Making a tap do nothing (Scriptable runs and closes) was tried and reverted at the user's request because Scriptable flashing up was worse than opening the browser (0bd671a, reverted in 9184ea0); all pushed.
 
