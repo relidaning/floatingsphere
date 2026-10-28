@@ -304,17 +304,38 @@ def collect_sessions():
     # background keeps its terminal `claude --resume` alongside the daemon's
     # worker, both registered under the same sessionId. Show it once, with the
     # liveliest status, and remember every pid so stopping it stops all of them.
+    # Since 2.1.312 moving it to the background can instead fork the conversation
+    # into a daemon job with a new sessionId; the terminal's entry then names the
+    # job in `parkedJobId`. Those merge under the job's sessionId, the one that goes on,
+    # once its transcript exists (the fork writes it on its first turn); until then
+    # under the terminal's, so the web chat still has the conversation to show.
+    jobs = {i["jobId"]: i for i in live if i.get("jobId")}
+    parked = {}  # sessionId -> the sessionId it is shown under
+    for term in live:
+        job = jobs.get(term.get("parkedJobId"))
+        if not (job and job.get("sessionId") and term.get("sessionId")):
+            continue
+        fork = os.path.join(PROJECTS_DIR, _project_slug(job.get("cwd") or ""),
+                            f"{job['sessionId']}.jsonl")
+        if os.path.exists(fork):
+            parked[term["sessionId"]] = job["sessionId"]
+        else:
+            parked[job["sessionId"]] = term["sessionId"]
     merged = {}
     for s in sorted(sessions, key=rank):
-        key = s["session_id"] or f"pid:{s['pid']}"
-        if key in merged:
-            merged[key]["pids"].append(s["pid"])
-        else:
-            merged[key] = dict(s, pids=[s["pid"]])
+        key = parked.get(s["session_id"], s["session_id"]) or f"pid:{s['pid']}"
+        if key not in merged:
+            merged[key] = dict(s, session_id=key, pids=[s["pid"]])
+            continue
+        merged[key]["pids"].append(s["pid"])
+        if s["session_id"] == key:
+            # The shown id's transcript is the live one, whichever entry ranked first.
+            merged[key].update({k: s[k] for k in ("name", "task", "tool", "model")})
     # Sessions come and go all day (every cron run is one) and the sphere and sphere-web
     # run for weeks, so drop the transcripts of the ones that are gone. pop(…, None):
     # sphere-web scans from several threads, and another may have dropped it already.
-    for gone in [k for k in list(_transcript_cache) if k not in merged]:
+    ids = {s["session_id"] for s in sessions}
+    for gone in [k for k in list(_transcript_cache) if k not in ids]:
         _transcript_cache.pop(gone, None)
     return sorted(merged.values(), key=rank)
 
