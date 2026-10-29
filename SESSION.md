@@ -1,5 +1,8 @@
 # Sessions
 
+## 2026-10-29 — /skills from the phone opens a skills sheet
+A bare `/skills` typed in the web chat used to go to the terminal, where claude's unnumbered scrolling panel left the session in `waiting` with nothing to show. It now opens a sheet like `/resume`'s, listing the session's skills from `/api/commands` grouped project / user / plugins / claude.ai. Tapping one fills `/name `; switching skills on or off is still done on the PC. Along the way, `list_commands()` was changed so a user skill shadows a project skill of the same name, as Claude Code does. Tested in a headless browser at phone size but not on the real phone (6c1192d, pushed; CLAUDE.md note in the same commit). Other pickers such as `/model` and `/mcp` can still get stuck this way, and the screen view's Esc key gets out of them.
+
 ## 2026-10-28 — One besmart session showed as two
 Since Claude Code 2.1.312 a session moved to the background can be forked into a daemon job with a new `sessionId` (`--fork-session --resume`), so the terminal and the job showed up as two sessions. `collect_sessions()` now merges them through the terminal's `parkedJobId` (= the job's `jobId`). The merged session is listed under the fork's id once its transcript exists and under the terminal's until then, so the web chat isn't empty, and `successor()` follows the switch like a /clear (fbd55a9, pushed; CLAUDE.md note in the same commit).
 
