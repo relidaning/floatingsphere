@@ -100,7 +100,7 @@ def _skills(root, prefix, src):
         if meta.get("user-invocable") is False:
             continue
         name = str(meta.get("name") or os.path.basename(os.path.dirname(p)))
-        out.append({"name": prefix + name, "desc": _desc(meta), "src": src})
+        out.append({"name": prefix + name, "desc": _desc(meta), "src": src, "skill": True})
     return out
 
 
@@ -135,19 +135,20 @@ def _plugins():
 
 
 def list_commands(cwd):
-    """[{name, desc, src}] for a session in `cwd`, without the leading slash, sorted by name.
-    Project entries shadow user ones, which shadow built-ins, as in Claude Code."""
+    """[{name, desc, src, skill?}] for a session in `cwd`, without the leading slash, sorted by name.
+    User entries shadow project ones, which shadow built-ins, as in Claude Code (its /skills
+    panel lists a skill in both places as "user")."""
     hit = _cache.get(cwd)
     if hit and time.monotonic() - hit[0] < CACHE_S:
         return hit[1]
     found = [{"name": n, "desc": d, "src": "built-in"} for n, d in BUILTIN]
     found += _skills(os.path.join(CLAUDE_DIR, "skills", "synced", "*"), "anthropic-skills:", "org")
     found += _plugins()
-    found += _skills(os.path.join(CLAUDE_DIR, "skills"), "", "user")
-    found += _commands(os.path.join(CLAUDE_DIR, "commands"), "", "user")
     if cwd:
         found += _skills(os.path.join(cwd, ".claude", "skills"), "", "project")
         found += _commands(os.path.join(cwd, ".claude", "commands"), "", "project")
+    found += _skills(os.path.join(CLAUDE_DIR, "skills"), "", "user")
+    found += _commands(os.path.join(CLAUDE_DIR, "commands"), "", "user")
     by_name = {c["name"]: c for c in found}  # later sources win
     cmds = sorted(by_name.values(), key=lambda c: c["name"])
     _cache[cwd] = (time.monotonic(), cmds)
