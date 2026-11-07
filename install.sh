@@ -22,19 +22,46 @@ command -v hyprctl &>/dev/null || missing+=("hyprctl (Hyprland: window placement
 if [[ ${#missing[@]} -gt 0 ]]; then
     echo "==> floatingsphere: missing dependencies:"
     printf '  - %s\n' "${missing[@]}"
+    exit 1
 fi
 
-# sphere-web.service runs sphere_web.py from /data/apps/floatingsphere.
-[[ "$REPO_DIR" == /data/apps/floatingsphere ]] \
-    || echo "  WARNING: sphere-web.service expects this repo at /data/apps/floatingsphere (it is at $REPO_DIR)."
+# Render the unit for this checkout. Replace atomically so a legacy deployed
+# symlink cannot cause a write into the tracked template.
 if command -v systemctl &>/dev/null; then
-    mkdir -p "$HOME/.config/systemd/user"
-    ln -sfn "$REPO_DIR/sphere-web.service" "$HOME/.config/systemd/user/sphere-web.service"
-    systemctl --user daemon-reload \
-        && systemctl --user enable --now sphere-web.service \
-        && echo "==> sphere-web.service enabled (http://localhost:8765)" \
-        || echo "  WARNING: could not enable sphere-web.service."
+    unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+    changed=$(python3 - "$REPO_DIR" "$unit_dir" <<'PY'
+from pathlib import Path
+import os,sys,tempfile
+repo, directory = map(Path,sys.argv[1:])
+directory.mkdir(parents=True,exist_ok=True)
+unit=directory/'sphere-web.service'
+quoted=str(repo).replace('\\','\\\\').replace('"','\\"').replace('%','%%')
+text=(repo/'sphere-web.service').read_text().replace('/data/apps/floatingsphere/sphere_web.py','"'+quoted+'/sphere_web.py"')
+if unit.is_file() and not unit.is_symlink() and unit.read_text()==text and unit.stat().st_mode & 0o777 == 0o644:
+    print('0')
+else:
+    fd,path=tempfile.mkstemp(dir=directory,prefix='.sphere-web-')
+    with os.fdopen(fd,'w') as stream:stream.write(text)
+    os.chmod(path,0o644)
+    os.replace(path,unit)
+    print('1')
+PY
+    ) || exit 1
+    if [[ "$changed" == 1 ]] || [[ "$(systemctl --user show -p NeedDaemonReload --value sphere-web.service)" == yes ]]; then
+        systemctl --user daemon-reload || exit 1
+    fi
+    systemctl --user is-enabled --quiet sphere-web.service || systemctl --user enable sphere-web.service || exit 1
+    if [[ "$changed" == 1 ]] && systemctl --user is-active --quiet sphere-web.service; then
+        systemctl --user restart sphere-web.service || exit 1
+    else
+        systemctl --user is-active --quiet sphere-web.service || systemctl --user start sphere-web.service || exit 1
+    fi
+    echo "==> sphere-web.service enabled (http://localhost:8765)"
+else
+    echo 'ERROR: systemctl is required for sphere-web.service.' >&2
+    exit 1
 fi
 [[ -f "$HOME/.config/floatingsphere/tls-cert.pem" ]] \
     || echo "  NOTE: phone push needs ~/.config/floatingsphere/tls-{cert,key}.pem (see README)."
 echo "==> floatingsphere ready."
+[[ ${#missing[@]} == 0 ]]

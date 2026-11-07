@@ -2,6 +2,13 @@
 
 Floating desktop monitor for Claude subscription usage and Claude Code sessions. Python, GTK4 via PyGObject, cairo drawing. Run: `python3 floatingsphere.py` (double right-click quits). User-facing overview in `README.md`.
 
+Installer portability: render the legacy sphere-web.service template for the
+current checkout under XDG_CONFIG_HOME/systemd/user, replacing a deployed symlink
+atomically without writing into its target. Compare content before writing;
+reload/restart only changed units and enable/start only missing service states.
+Missing dependencies or service setup failures return nonzero. Test installation
+with temporary homes and fake systemctl; never restart the live service as a test.
+
 ## Visual mapping
 - Center number: live Claude Code sessions (`len(collect_sessions())`).
 - Outer ring: 7-day usage % (white tick = time elapsed in the week). Faint amber from 7d up to today's quota ceiling; the part of 7d past the ceiling is RING_HOT.

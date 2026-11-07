@@ -29,9 +29,15 @@ computed the same way (`quota.py`) when maxer hasn't written today's.
 ## Install
 
 `./install.sh` checks the dependencies and enables the `sphere-web` user service. The
-sphere itself is started by Hyprland: the `exec-once`, window rules and kitty remote-control
+service unit is rendered for the current checkout into
+`${XDG_CONFIG_HOME:-~/.config}/systemd/user/sphere-web.service`. The shipped unit
+is its legacy template; moving the checkout requires rerunning the installer.
+Matching units and running services are left alone; a changed unit is reloaded
+and its service restarted. Runtime host/port settings remain `SPHERE_WEB_*`.
+
+The sphere itself is started by Hyprland: the `exec-once`, window rules and kitty remote-control
 settings are in [relidaning/dotfiles](https://github.com/relidaning/dotfiles), whose
-installer clones this repo to `/data/apps/floatingsphere` and runs `install.sh`.
+installer clones this repo beside dotfiles under its configured `APPS_DIR` and runs `install.sh`.
 
 ## Interaction
 
